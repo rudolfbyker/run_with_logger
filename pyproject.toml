@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "run_with_logger"
+description="Like `subprocess.run`, but with the ability to pipe `stdout` and/or `stderr` to a `Logger` or capture each stream independently while the process is running."
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [ ]
+authors = [
+    {name = "Rudolf Byker", email = "rudolfbyker@gmail.com"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: Other/Proprietary License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.11"  # TODO: Might work with earlier versions. Test it.
+
+[project.urls]
+repository = "https://github.com/rudolfbyker/run_with_logger"
+
+[tool.setuptools_scm]
+write_to = "src/run_with_logger/version.py"
