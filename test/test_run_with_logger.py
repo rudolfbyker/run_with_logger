@@ -1,7 +1,8 @@
 import json
 import sys
 import unittest
-from logging import getLogger
+from logging import getLogger, DEBUG, INFO
+from pathlib import Path
 
 from run_with_logger import run_with_logger
 
@@ -86,3 +87,84 @@ for i in range({n}):
             completed.stderr.decode().splitlines(),
         )
         self.assertEqual(0, completed.returncode)
+
+    def test_path_arguments(self) -> None:
+        """
+        This tests that `run_with_logger` can handle `Path` objects in the `args` list.
+        """
+
+        logger = getLogger(__name__)
+        with self.assertLogs(logger=logger, level="DEBUG") as cm:
+            completed = run_with_logger(
+                logger=logger,
+                level=INFO,
+                args=[
+                    sys.executable,
+                    "-c",
+                    "import sys; print(sys.argv[1])",
+                    Path("/foo/bar"),
+                ],
+            )
+
+        self.assertEqual(
+            [
+                (
+                    DEBUG,
+                    f'Starting process: ["{sys.executable}", "-c", "import sys; print(sys.argv[1])", "/foo/bar"]',
+                ),
+                (
+                    INFO,
+                    "/foo/bar",
+                ),
+            ],
+            [(r.levelno, r.getMessage()) for r in cm.records],
+        )
+        self.assertEqual(0, completed.returncode)
+
+    def test_shell_string(self) -> None:
+        """
+        Test with a string passed to a shell.
+        """
+        logger = getLogger(__name__)
+        with self.assertLogs(logger=logger, level="DEBUG") as cm:
+            completed = run_with_logger(
+                logger=logger,
+                level=INFO,
+                args=f"{sys.executable} -c 'import sys; print(sys.argv[1])' /foo/bar",
+                shell=True,
+            )
+
+        self.assertEqual(
+            [
+                (
+                    DEBUG,
+                    f"Starting process: {sys.executable} -c 'import sys; print(sys.argv[1])' /foo/bar",
+                ),
+                (
+                    INFO,
+                    "/foo/bar",
+                ),
+            ],
+            [(r.levelno, r.getMessage()) for r in cm.records],
+        )
+        self.assertEqual(0, completed.returncode)
+
+    def test_shell_path(self) -> None:
+        """
+        Test with a Path passed to a shell.
+        """
+        logger = getLogger(__name__)
+        with self.assertLogs(logger=logger, level="DEBUG") as cm:
+            with self.assertRaises(TypeError):
+                # TypeError: path-like args is not allowed when shell is true
+                run_with_logger(
+                    logger=logger,
+                    level=INFO,
+                    args=Path(sys.executable),
+                    shell=True,
+                )
+
+        self.assertEqual(
+            [(DEBUG, f"Starting process: {sys.executable}")],
+            [(r.levelno, r.getMessage()) for r in cm.records],
+        )

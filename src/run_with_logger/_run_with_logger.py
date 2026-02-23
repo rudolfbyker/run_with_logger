@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 from logging import Logger, DEBUG
+from os import PathLike
 from subprocess import CompletedProcess, Popen, DEVNULL, PIPE, CalledProcessError
 from time import sleep
 from typing import Optional, Union, IO
@@ -47,7 +48,12 @@ def run_with_logger(
     if stdin_io is not None and stdin_data is not None:
         raise ValueError("Only one of `stdin_io` or `stdin_data` may be specified.")
 
-    logger.debug(f"Starting process: {json.dumps(args)}")
+    if isinstance(args, (str, bytes, PathLike)):
+        args_str = str(args)
+    else:
+        args_str = json.dumps([str(a) for a in args])
+    logger.debug(f"Starting process: {args_str}")
+
     with Popen(
         cwd=cwd,
         args=args,
