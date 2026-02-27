@@ -1,2 +1,5 @@
 mypy==1.11.2
 types-setuptools==75.*
+fabric
+paramiko
+types-paramiko

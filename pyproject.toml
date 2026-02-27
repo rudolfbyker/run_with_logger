@@ -18,6 +18,12 @@ classifiers = [
 ]
 requires-python = ">=3.11"  # TODO: Might work with earlier versions. Test it.
 
+[project.optional-dependencies]
+ssh = [
+    "paramiko",
+    "fabric",
+]
+
 [project.urls]
 repository = "https://github.com/rudolfbyker/run_with_logger"
 
