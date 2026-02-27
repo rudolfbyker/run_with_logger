@@ -1,7 +1,7 @@
 import json
 from io import BytesIO
 from logging import Logger, DEBUG
-from os import PathLike
+from os import PathLike, environ
 from subprocess import CompletedProcess, Popen, DEVNULL, PIPE, CalledProcessError
 from time import sleep
 from typing import Optional, Union, IO
@@ -24,6 +24,7 @@ def run_with_logger(
     stderr_action: StreamActionT = "log",
     stdin_data: Optional[bytes] = None,
     stdin_io: Union[None, int, IO[bytes]] = None,
+    extra_env: Optional[dict[str, str]] = None,
 ) -> CompletedProcess[bytes]:
     """
     Like `subprocess.run`, but with the ability to pipe `stdout` and/or `stderr` to a `Logger` or capture each stream
@@ -41,6 +42,9 @@ def run_with_logger(
         stderr_action: What to do with stderr. See `StreamActionT`.
         stdin_data: Data to write to the stdin of the process.
         stdin_io: A file object to pass directly to Popen.
+        extra_env:
+            Extra environment variables to set for the process.
+            These will be added to the current environment.
     """
     stdout_buffer: Optional[IO[bytes]] = None
     stderr_buffer: Optional[IO[bytes]] = None
@@ -61,6 +65,7 @@ def run_with_logger(
         stdout=DEVNULL if stdout_action == "discard" else PIPE,
         stderr=DEVNULL if stderr_action == "discard" else PIPE,
         stdin=PIPE if stdin_data is not None else stdin_io,
+        env=None if extra_env is None else {**environ, **extra_env},
     ) as process:
         if process.stdin and stdin_data is not None:
             with process.stdin as f:

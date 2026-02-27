@@ -2,6 +2,7 @@ import json
 import sys
 import unittest
 from logging import getLogger, DEBUG, INFO
+from os import environ
 from pathlib import Path
 
 from run_with_logger import run_with_logger
@@ -168,3 +169,49 @@ for i in range({n}):
             [(DEBUG, f"Starting process: {sys.executable}")],
             [(r.levelno, r.getMessage()) for r in cm.records],
         )
+
+    def test_extra_env(self) -> None:
+        """
+        Test that `extra_env` is passed correctly.
+        """
+        logger = getLogger(__name__)
+
+        py_code = "import os; import json; print(json.dumps(dict(os.environ)))"
+
+        with self.assertNoLogs(logger=logger):
+            completed = run_with_logger(
+                logger=logger,
+                level=INFO,
+                args=[sys.executable, "-c", py_code],
+                extra_env=None,
+                stdout_action="capture",
+            )
+            baseline = json.loads(completed.stdout)
+
+        with self.assertNoLogs(logger=logger):
+            completed = run_with_logger(
+                logger=logger,
+                level=INFO,
+                args=[sys.executable, "-c", py_code],
+                extra_env={},
+                stdout_action="capture",
+            )
+            empty_extras = json.loads(completed.stdout)
+
+        with self.assertNoLogs(logger=logger):
+            completed = run_with_logger(
+                logger=logger,
+                level=INFO,
+                args=[sys.executable, "-c", py_code],
+                extra_env={
+                    "FOO": "BAR",
+                    "BAZ": "QUX",
+                },
+                stdout_action="capture",
+            )
+            with_extras = json.loads(completed.stdout)
+
+        self.assertTrue(len(environ) > 0)
+        self.assertEqual(baseline.keys(), environ.keys())
+        self.assertEqual(empty_extras.keys(), environ.keys())
+        self.assertEqual({"BAZ", "FOO"}, with_extras.keys() - environ.keys())
