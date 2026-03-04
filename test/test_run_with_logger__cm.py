@@ -19,12 +19,15 @@ class TestRunWithLoggerContextManager(unittest.TestCase):
 
         py_code = """\
 from time import sleep
+from sys import stdout
 
 sleep(0.1)
 print("A")
+stdout.flush()
 
 sleep(0.1)
 print("B")
+stdout.flush()
 """
 
         with self.assertNoLogs(logger=logger):
@@ -69,9 +72,11 @@ from sys import stderr
 
 sleep(0.1)
 print("A", file=stderr)
+stderr.flush()
 
 sleep(0.1)
 print("B", file=stderr)
+stderr.flush()
 """
 
         with self.assertNoLogs(logger=logger):
