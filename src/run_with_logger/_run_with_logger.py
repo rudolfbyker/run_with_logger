@@ -27,6 +27,7 @@ def run_with_logger__cm(
     stdin_data: Optional[bytes] = None,
     stdin_io: Union[None, int, BytesIO] = None,
     extra_env: Optional[dict[str, str]] = None,
+    creationflags: int = 0,
 ) -> Generator[RunningProcessInfo, None, None]:
     """
     Like `subprocess.run`, but with the ability to pipe `stdout` and/or `stderr` to a `Logger` or capture each stream
@@ -50,6 +51,7 @@ def run_with_logger__cm(
         extra_env:
             Extra environment variables to set for the process.
             These will be added to the current environment.
+        creationflags: See the `subprocess.Popen` documentation for details.
     """
     stdout_buffer: Optional[BytesIO] = None
     stderr_buffer: Optional[BytesIO] = None
@@ -71,6 +73,7 @@ def run_with_logger__cm(
         stderr=DEVNULL if stderr_action == "discard" else PIPE,
         stdin=PIPE if stdin_data is not None else stdin_io,
         env=None if extra_env is None else {**environ, **extra_env},
+        creationflags=creationflags,
     ) as process:
         if process.stdin and stdin_data is not None:
             with process.stdin as f:
@@ -156,6 +159,7 @@ def run_with_logger(
     stdin_data: Optional[bytes] = None,
     stdin_io: Union[None, int, BytesIO] = None,
     extra_env: Optional[dict[str, str]] = None,
+    creationflags: int = 0,
 ) -> CompletedProcess[bytes]:
     """
     Like `subprocess.run`, but with the ability to pipe `stdout` and/or `stderr` to a `Logger` or capture each stream
@@ -176,6 +180,7 @@ def run_with_logger(
         extra_env:
             Extra environment variables to set for the process.
             These will be added to the current environment.
+        creationflags: See the `subprocess.Popen` documentation for details.
     """
     with run_with_logger__cm(
         args=args,
@@ -190,6 +195,7 @@ def run_with_logger(
         stdin_data=stdin_data,
         stdin_io=stdin_io,
         extra_env=extra_env,
+        creationflags=creationflags,
     ) as info:
         pass
 
