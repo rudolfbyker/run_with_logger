@@ -193,4 +193,6 @@ def run_with_logger(
     ) as info:
         pass
 
-    return info["completed"]
+    completed = info["completed"]
+    assert completed is not None
+    return completed

@@ -191,4 +191,6 @@ def run_with_logger__ssh(
     ) as info:
         pass
 
-    return info["completed"]
+    completed = info["completed"]
+    assert completed is not None
+    return completed

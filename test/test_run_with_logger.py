@@ -4,6 +4,7 @@ import unittest
 from logging import getLogger, DEBUG, INFO
 from os import environ
 from pathlib import Path
+from typing import List
 
 from run_with_logger import run_with_logger
 
@@ -96,7 +97,7 @@ for i in range({n}):
 
         logger = getLogger(__name__)
         with self.assertLogs(logger=logger, level="DEBUG") as cm:
-            args = [
+            args: List[str | Path] = [
                 sys.executable,
                 "-c",
                 "import sys; print(sys.argv[1])",
