@@ -96,26 +96,27 @@ for i in range({n}):
 
         logger = getLogger(__name__)
         with self.assertLogs(logger=logger, level="DEBUG") as cm:
+            args = [
+                sys.executable,
+                "-c",
+                "import sys; print(sys.argv[1])",
+                Path("/foo/bar"),
+            ]
             completed = run_with_logger(
                 logger=logger,
                 level=INFO,
-                args=[
-                    sys.executable,
-                    "-c",
-                    "import sys; print(sys.argv[1])",
-                    Path("/foo/bar"),
-                ],
+                args=args,
             )
 
         self.assertEqual(
             [
                 (
                     DEBUG,
-                    f'Starting process: ["{sys.executable}", "-c", "import sys; print(sys.argv[1])", "/foo/bar"]',
+                    f"Starting process: {json.dumps([str(a) for a in args])}",
                 ),
                 (
                     INFO,
-                    "/foo/bar",
+                    str(Path("/foo/bar")),
                 ),
             ],
             [(r.levelno, r.getMessage()) for r in cm.records],
@@ -131,7 +132,7 @@ for i in range({n}):
             completed = run_with_logger(
                 logger=logger,
                 level=INFO,
-                args=f"{sys.executable} -c 'import sys; print(sys.argv[1])' /foo/bar",
+                args=f'{sys.executable} -c "import sys; print(sys.argv[1])" /foo/bar',
                 shell=True,
             )
 
@@ -139,7 +140,7 @@ for i in range({n}):
             [
                 (
                     DEBUG,
-                    f"Starting process: {sys.executable} -c 'import sys; print(sys.argv[1])' /foo/bar",
+                    f'Starting process: {sys.executable} -c "import sys; print(sys.argv[1])" /foo/bar',
                 ),
                 (
                     INFO,
