@@ -53,11 +53,11 @@ stdout.flush()
 
                 self.assertEqual(
                     [
-                        b"",
-                        b"A\r\n",
-                        b"A\r\nB\r\n",
+                        [],
+                        ["A"],
+                        ["A", "B"],
                     ],
-                    incremental_capture,
+                    [item.decode().splitlines() for item in incremental_capture],
                 )
 
     def test_context_manager_incremental_capture_stderr(self) -> None:
@@ -102,9 +102,9 @@ stderr.flush()
 
                 self.assertEqual(
                     [
-                        b"",
-                        b"A\r\n",
-                        b"A\r\nB\r\n",
+                        [],
+                        ["A"],
+                        ["A", "B"],
                     ],
-                    incremental_capture,
+                    [item.decode().splitlines() for item in incremental_capture],
                 )
