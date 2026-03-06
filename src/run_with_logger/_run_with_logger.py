@@ -5,7 +5,7 @@ from logging import Logger, DEBUG
 from os import PathLike, environ
 from subprocess import Popen, DEVNULL, PIPE, CalledProcessError, CompletedProcess
 from time import sleep
-from typing import Optional, Union, Generator
+from typing import Optional, Union, Generator, IO
 
 from ._pipe_capture import pipe_capture__thread
 from ._pipe_to_logger import pipe_to_logger__thread
@@ -25,7 +25,7 @@ def run_with_logger__cm(
     stdout_action: StreamActionT = "log",
     stderr_action: StreamActionT = "log",
     stdin_data: Optional[bytes] = None,
-    stdin_io: Union[None, int, BytesIO] = None,
+    stdin_io: Union[None, int, BytesIO, IO[bytes]] = None,
     extra_env: Optional[dict[str, str]] = None,
     creationflags: int = 0,
 ) -> Generator[RunningProcessInfo, None, None]:
@@ -157,7 +157,7 @@ def run_with_logger(
     stdout_action: StreamActionT = "log",
     stderr_action: StreamActionT = "log",
     stdin_data: Optional[bytes] = None,
-    stdin_io: Union[None, int, BytesIO] = None,
+    stdin_io: Union[None, int, BytesIO, IO[bytes]] = None,
     extra_env: Optional[dict[str, str]] = None,
     creationflags: int = 0,
 ) -> CompletedProcess[bytes]:

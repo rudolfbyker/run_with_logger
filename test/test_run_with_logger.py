@@ -4,6 +4,7 @@ import unittest
 from logging import getLogger, DEBUG, INFO
 from os import environ
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import List
 
 from run_with_logger import run_with_logger
@@ -217,3 +218,46 @@ for i in range({n}):
         self.assertEqual(baseline.keys(), environ.keys())
         self.assertEqual(empty_extras.keys(), environ.keys())
         self.assertEqual({"BAZ", "FOO"}, with_extras.keys() - environ.keys())
+
+    def test_stdin_data(self) -> None:
+        logger = getLogger(__name__)
+        script = """\
+import sys
+a,b = sys.stdin.read().split()
+print(a, file=sys.stdout)
+print(b, file=sys.stderr)
+"""
+        completed = run_with_logger(
+            logger=logger,
+            args=[sys.executable, "-c", script],
+            stdin_data=b"Hello World",
+            stderr_action="capture",
+            stdout_action="capture",
+        )
+        self.assertEqual("Hello", completed.stdout.decode().strip())
+        self.assertEqual("World", completed.stderr.decode().strip())
+
+    def test_stdin_io_file(self) -> None:
+        logger = getLogger(__name__)
+        script = """\
+import sys
+a,b = sys.stdin.read().split()
+print(a, file=sys.stdout)
+print(b, file=sys.stderr)
+"""
+
+        with TemporaryDirectory() as tmp_dir_str:
+            tmp_dir = Path(tmp_dir_str)
+            stdin_file = tmp_dir / "stdin.txt"
+            stdin_file.write_text("Hello World")
+
+            with stdin_file.open(mode="rb") as f:
+                completed = run_with_logger(
+                    logger=logger,
+                    args=[sys.executable, "-c", script],
+                    stdin_io=f,
+                    stderr_action="capture",
+                    stdout_action="capture",
+                )
+                self.assertEqual("Hello", completed.stdout.decode().strip())
+                self.assertEqual("World", completed.stderr.decode().strip())
