@@ -1,5 +1,5 @@
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, AbstractContextManager, nullcontext
 from io import BytesIO
 from logging import Logger, DEBUG
 from os import PathLike, environ
@@ -82,6 +82,7 @@ def run_with_logger__cm(
                 f.write(stdin_data)
 
         # Set up `stdout` handler.
+        stdout_cm: AbstractContextManager[None]
         if stdout_action == "log" and process.stdout:
             stdout_cm = pipe_to_logger__thread(
                 pipe=process.stdout,
@@ -96,9 +97,10 @@ def run_with_logger__cm(
                 destination=stdout_buffer,
             )
         else:
-            stdout_cm = nullcontext()  # type: ignore
+            stdout_cm = nullcontext()
 
         # Set up `stderr` handler.
+        stderr_cm: AbstractContextManager[None]
         if stderr_action == "log" and process.stderr:
             stderr_cm = pipe_to_logger__thread(
                 pipe=process.stderr,
@@ -113,7 +115,7 @@ def run_with_logger__cm(
                 destination=stderr_buffer,
             )
         else:
-            stderr_cm = nullcontext()  # type: ignore
+            stderr_cm = nullcontext()
 
         info = RunningProcessInfo(
             process=process,
