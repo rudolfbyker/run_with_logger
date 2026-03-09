@@ -1,7 +1,7 @@
 import socket
 import unittest
 from contextlib import contextmanager
-from logging import getLogger
+from logging import getLogger, INFO
 from subprocess import run
 from time import sleep, monotonic
 from typing import Generator
@@ -151,6 +151,192 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             self.assertEqual("", completed.stdout.decode().strip())
             self.assertEqual(username, completed.stderr.decode().strip())
 
+    def test_paramiko__log_stdout(self) -> None:
+        logger = getLogger(__name__)
+
+        port = 54321
+        username = "user"
+        password = "password"
+
+        with ssh_server(
+            port=port,
+            username=username,
+            password=password,
+        ):
+            ssh_client = SSHClient()
+            try:
+                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
+                ssh_client.connect(
+                    hostname="localhost",
+                    port=port,
+                    username=username,
+                    password=password,
+                )
+                with self.assertLogs(level=INFO) as logs:
+                    completed = run_with_logger__ssh(
+                        logger=logger,
+                        level=INFO,
+                        client=ssh_client,
+                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
+                        stdout_action="log",
+                        stderr_action="discard",
+                        check=False,
+                    )
+
+                self.assertEqual(
+                    [
+                        (INFO, "One\n"),
+                        (INFO, "Two\n"),
+                        (INFO, "Three\n"),
+                    ],
+                    [(r.levelno, r.message) for r in logs.records],
+                )
+
+                self.assertEqual(0, completed.returncode)
+                self.assertIsNone(completed.stdout)
+                self.assertIsNone(completed.stderr)
+            finally:
+                ssh_client.close()
+
+    def test_paramiko__log_stderr(self) -> None:
+        logger = getLogger(__name__)
+
+        port = 54321
+        username = "user"
+        password = "password"
+
+        with ssh_server(
+            port=port,
+            username=username,
+            password=password,
+        ):
+            ssh_client = SSHClient()
+            try:
+                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
+                ssh_client.connect(
+                    hostname="localhost",
+                    port=port,
+                    username=username,
+                    password=password,
+                )
+                with self.assertLogs(level=INFO) as logs:
+                    completed = run_with_logger__ssh(
+                        logger=logger,
+                        level=INFO,
+                        client=ssh_client,
+                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
+                        stdout_action="discard",
+                        stderr_action="log",
+                        check=False,
+                    )
+
+                self.assertEqual(
+                    [
+                        (INFO, "One\n"),
+                        (INFO, "Two\n"),
+                        (INFO, "Three\n"),
+                    ],
+                    [(r.levelno, r.message) for r in logs.records],
+                )
+
+                self.assertEqual(0, completed.returncode)
+                self.assertIsNone(completed.stdout)
+                self.assertIsNone(completed.stderr)
+            finally:
+                ssh_client.close()
+
+    def test_fabric__log_stdout(self) -> None:
+        from fabric import Connection
+
+        logger = getLogger(__name__)
+
+        port = 54321
+        username = "user"
+        password = "password"
+
+        with ssh_server(
+            port=port,
+            username=username,
+            password=password,
+        ):
+            with Connection(
+                host="localhost",
+                port=port,
+                user=username,
+                connect_kwargs={
+                    "password": password,
+                },
+            ) as conn:
+                with self.assertLogs(level=INFO, logger=logger) as logs:
+                    completed = run_with_logger__ssh(
+                        logger=logger,
+                        level=INFO,
+                        client=conn,
+                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
+                        stdout_action="log",
+                        stderr_action="discard",
+                        check=False,
+                    )
+
+                self.assertEqual(
+                    [
+                        (INFO, "One\n"),
+                        (INFO, "Two\n"),
+                        (INFO, "Three\n"),
+                    ],
+                    [(r.levelno, r.message) for r in logs.records],
+                )
+
+                self.assertEqual(0, completed.returncode)
+                self.assertIsNone(completed.stdout)
+                self.assertIsNone(completed.stderr)
+
+    def test_fabric__log_stderr(self) -> None:
+        from fabric import Connection
+
+        logger = getLogger(__name__)
+
+        port = 54321
+        username = "user"
+        password = "password"
+
+        with ssh_server(
+            port=port,
+            username=username,
+            password=password,
+        ):
+            with Connection(
+                host="localhost",
+                port=port,
+                user=username,
+                connect_kwargs={
+                    "password": password,
+                },
+            ) as conn:
+                with self.assertLogs(level=INFO, logger=logger) as logs:
+                    completed = run_with_logger__ssh(
+                        logger=logger,
+                        level=INFO,
+                        client=conn,
+                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
+                        stdout_action="discard",
+                        stderr_action="log",
+                        check=False,
+                    )
+
+                self.assertEqual(
+                    [
+                        (INFO, "One\n"),
+                        (INFO, "Two\n"),
+                        (INFO, "Three\n"),
+                    ],
+                    [(r.levelno, r.message) for r in logs.records],
+                )
+
+                self.assertEqual(0, completed.returncode)
+                self.assertIsNone(completed.stdout)
+                self.assertIsNone(completed.stderr)
+
 
 @contextmanager
 def ssh_server(
@@ -233,6 +419,9 @@ def stop_and_remove_container(*, name: str) -> None:
         if "No such container" in completed.stderr:
             return
 
+        if "is already in progress" in completed.stderr:
+            return
+
         logger.error(f"Failed to stop container `{name}`:\n{completed.stderr}")
 
     completed = run(
@@ -248,6 +437,9 @@ def stop_and_remove_container(*, name: str) -> None:
     )
     if completed.returncode:
         if "No such container" in completed.stderr:
+            return
+
+        if "is already in progress" in completed.stderr:
             return
 
         logger.error(f"Failed to remove container `{name}`:\n{completed.stderr}")
