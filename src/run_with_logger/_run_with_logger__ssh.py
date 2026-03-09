@@ -46,6 +46,9 @@ def run_with_logger__ssh__cm(
         extra_env:
             Extra environment variables to set for the process.
             These will be added to the current environment.
+            This only works if the server's `AcceptEnv` setting allows the provided environment variable names.
+            Others are silently ignored.
+            To work around this, set the environment variables in the command itself, e.g. `VAR=value my_command`.
     """
     from paramiko import SSHClient
 
@@ -176,6 +179,9 @@ def run_with_logger__ssh(
         extra_env:
             Extra environment variables to set for the process.
             These will be added to the current environment.
+            This only works if the server's `AcceptEnv` setting allows the provided environment variable names.
+            Others are silently ignored.
+            To work around this, set the environment variables in the command itself, e.g. `VAR=value my_command`.
     """
     with run_with_logger__ssh__cm(
         client=client,
