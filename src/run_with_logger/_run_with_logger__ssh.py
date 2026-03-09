@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, AbstractContextManager
 from io import BytesIO
 from logging import Logger, DEBUG
 from subprocess import CompletedProcess, CalledProcessError
@@ -72,10 +72,16 @@ def run_with_logger__ssh__cm(
         environment=extra_env,
     )
 
-    # Handle stdout
+    # Write to `stdin`.
+    if stdin_data is not None:
+        stdin_stream.write(stdin_data)
+        stdin_stream.close()
+
+    # Set up `stdout` handler.
     stdout_buffer: Optional[BytesIO] = None
+    stdout_cm: AbstractContextManager[None]
     if stdout_action == "log":
-        pipe_to_logger__thread(
+        stdout_cm = pipe_to_logger__thread(
             pipe=stdout_stream,
             logger=logger,
             level=level,
@@ -83,15 +89,18 @@ def run_with_logger__ssh__cm(
         )
     elif stdout_action == "capture":
         stdout_buffer = BytesIO()
-        pipe_capture__thread(
+        stdout_cm = pipe_capture__thread(
             pipe=stdout_stream,
             destination=stdout_buffer,
         )
+    else:
+        stdout_cm = nullcontext()
 
-    # Handle stderr
+    # Set up `stderr` handler.
     stderr_buffer: Optional[BytesIO] = None
+    stderr_cm: AbstractContextManager[None]
     if stderr_action == "log":
-        pipe_to_logger__thread(
+        stderr_cm = pipe_to_logger__thread(
             pipe=stderr_stream,
             logger=logger,
             level=level,
@@ -99,15 +108,12 @@ def run_with_logger__ssh__cm(
         )
     elif stderr_action == "capture":
         stderr_buffer = BytesIO()
-        pipe_capture__thread(
+        stderr_cm = pipe_capture__thread(
             pipe=stderr_stream,
             destination=stderr_buffer,
         )
-
-    # Write stdin data if provided
-    if stdin_data is not None:
-        stdin_stream.write(stdin_data)
-        stdin_stream.close()
+    else:
+        stderr_cm = nullcontext()
 
     channel = stdout_stream.channel
     info = RunningSshChannelInfo(
@@ -117,19 +123,13 @@ def run_with_logger__ssh__cm(
         completed=None,  # assigned later
     )
 
-    try:
-        yield info
-    finally:
-        # Wait for command completion
-        code = channel.recv_exit_status()
+    with stdout_cm, stderr_cm:
+        try:
+            yield info
 
-    if stdout_buffer:
-        # Capture the remaining stdout data after the command has completed
-        stdout_buffer.write(stdout_stream.read())
-
-    if stderr_buffer:
-        # Capture the remaining stderr data after the command has completed
-        stderr_buffer.write(stderr_stream.read())
+        finally:
+            # Wait for command completion
+            code = channel.recv_exit_status()
 
     if check and code:
         raise CalledProcessError(
