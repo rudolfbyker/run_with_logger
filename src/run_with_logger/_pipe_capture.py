@@ -5,7 +5,7 @@ from typing import IO, Generator
 
 def pipe_capture(
     *,
-    pipe: IO[bytes],
+    pipe: IO[bytes] | IO[str],
     destination: IO[bytes],
 ) -> None:
     """
@@ -19,13 +19,15 @@ def pipe_capture(
     """
     with pipe:
         for line in pipe:
+            if isinstance(line, str):
+                line = line.encode()
             destination.write(line)
 
 
 @contextmanager
 def pipe_capture__thread(
     *,
-    pipe: IO[bytes],
+    pipe: IO[bytes] | IO[str],
     destination: IO[bytes],
 ) -> Generator[None, None, None]:
     """
