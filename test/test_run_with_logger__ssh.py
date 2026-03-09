@@ -26,24 +26,27 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             password=password,
         ):
             ssh_client = SSHClient()
-            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-            ssh_client.connect(
-                hostname="localhost",
-                port=port,
-                username=username,
-                password=password,
-            )
-            completed = run_with_logger__ssh(
-                logger=logger,
-                client=ssh_client,
-                command="whoami",
-                stdout_action="capture",
-                stderr_action="capture",
-            )
+            try:
+                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
+                ssh_client.connect(
+                    hostname="localhost",
+                    port=port,
+                    username=username,
+                    password=password,
+                )
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    client=ssh_client,
+                    command="whoami",
+                    stdout_action="capture",
+                    stderr_action="capture",
+                )
 
-            self.assertEqual(0, completed.returncode)
-            self.assertEqual(username, completed.stdout.decode().strip())
-            self.assertEqual("", completed.stderr.decode().strip())
+                self.assertEqual(0, completed.returncode)
+                self.assertEqual(username, completed.stdout.decode().strip())
+                self.assertEqual("", completed.stderr.decode().strip())
+            finally:
+                ssh_client.close()
 
     def test_paramiko__capture_stderr(self) -> None:
         logger = getLogger(__name__)
@@ -58,24 +61,27 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             password=password,
         ):
             ssh_client = SSHClient()
-            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-            ssh_client.connect(
-                hostname="localhost",
-                port=port,
-                username=username,
-                password=password,
-            )
-            completed = run_with_logger__ssh(
-                logger=logger,
-                client=ssh_client,
-                command="whoami >&2",
-                stdout_action="capture",
-                stderr_action="capture",
-            )
+            try:
+                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
+                ssh_client.connect(
+                    hostname="localhost",
+                    port=port,
+                    username=username,
+                    password=password,
+                )
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    client=ssh_client,
+                    command="whoami >&2",
+                    stdout_action="capture",
+                    stderr_action="capture",
+                )
 
-            self.assertEqual(0, completed.returncode)
-            self.assertEqual("", completed.stdout.decode().strip())
-            self.assertEqual(username, completed.stderr.decode().strip())
+                self.assertEqual(0, completed.returncode)
+                self.assertEqual("", completed.stdout.decode().strip())
+                self.assertEqual(username, completed.stderr.decode().strip())
+            finally:
+                ssh_client.close()
 
     def test_fabric__capture_stdout(self) -> None:
         from fabric import Connection
