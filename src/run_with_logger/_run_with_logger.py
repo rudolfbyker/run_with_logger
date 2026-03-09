@@ -75,10 +75,13 @@ def run_with_logger__cm(
         env=None if extra_env is None else {**environ, **extra_env},
         creationflags=creationflags,
     ) as process:
+
+        # Write to `stdin`.
         if process.stdin and stdin_data is not None:
             with process.stdin as f:
                 f.write(stdin_data)
 
+        # Set up `stdout` handler.
         if stdout_action == "log" and process.stdout:
             stdout_cm = pipe_to_logger__thread(
                 pipe=process.stdout,
@@ -95,6 +98,7 @@ def run_with_logger__cm(
         else:
             stdout_cm = nullcontext()  # type: ignore
 
+        # Set up `stderr` handler.
         if stderr_action == "log" and process.stderr:
             stderr_cm = pipe_to_logger__thread(
                 pipe=process.stderr,
