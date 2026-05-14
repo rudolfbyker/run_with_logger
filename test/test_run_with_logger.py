@@ -301,9 +301,14 @@ sys.exit(7)
 
     def test_discard_both_streams_returns_none_streams(self) -> None:
         logger = getLogger(__name__)
+        script = """\
+import sys
+print("OUT")
+print("ERR", file=sys.stderr)
+"""
         completed = run_with_logger(
             logger=logger,
-            args=[sys.executable, "-c", 'print("OUT"); import sys; print("ERR", file=sys.stderr)'],
+            args=[sys.executable, "-c", script],
             stdout_action="discard",
             stderr_action="discard",
             check=False,
