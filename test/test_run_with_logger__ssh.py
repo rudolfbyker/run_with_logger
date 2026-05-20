@@ -5,8 +5,8 @@ from io import BytesIO
 from logging import getLogger, INFO
 from subprocess import CalledProcessError, run
 from time import sleep, monotonic
-from typing import Any, Generator
-from unittest.mock import patch
+from typing import Generator
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from paramiko import SSHClient, AutoAddPolicy
@@ -45,7 +45,7 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         logger = getLogger(__name__)
         ssh_client = SSHClient()
         channel = FakeChannel(exit_status=0)
-        stdin_stream = RecordingBytesIO()
+        stdin_stream = Mock()
         stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
         stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
 
@@ -67,8 +67,8 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             )
 
         exec_command.assert_called_once_with(command="cat", environment=None)
-        self.assertEqual([b"IN\n"], stdin_stream.writes)
-        self.assertTrue(stdin_stream.closed_by_run_with_logger)
+        stdin_stream.write.assert_called_once_with(b"IN\n")
+        stdin_stream.close.assert_called_once_with()
         self.assertEqual(0, completed.returncode)
         self.assertEqual(b"OUT\n", completed.stdout)
         self.assertEqual(b"ERR\n", completed.stderr)
@@ -87,7 +87,7 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             patch.object(
                 ssh_client,
                 "exec_command",
-                return_value=(RecordingBytesIO(), stdout_stream, stderr_stream),
+                return_value=(Mock(), stdout_stream, stderr_stream),
             ),
         ):
             with self.assertRaises(CalledProcessError) as cm:
@@ -554,18 +554,3 @@ class FakeChannelBytesIO(BytesIO):
     def __init__(self, initial_bytes: bytes, *, channel: FakeChannel):
         super().__init__(initial_bytes)
         self.channel = channel
-
-
-class RecordingBytesIO(BytesIO):
-    def __init__(self) -> None:
-        super().__init__()
-        self.writes: list[bytes] = []
-        self.closed_by_run_with_logger = False
-
-    def write(self, b: Any) -> int:
-        self.writes.append(b)
-        return super().write(b)
-
-    def close(self) -> None:
-        self.closed_by_run_with_logger = True
-        super().close()
