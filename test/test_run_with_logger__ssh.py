@@ -5,7 +5,7 @@ from io import BytesIO
 from logging import getLogger, INFO
 from subprocess import CalledProcessError, run
 from time import sleep, monotonic
-from typing import Generator
+from typing import Any, Generator
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -24,7 +24,7 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         ):
             with run_with_logger__ssh__cm(
                 logger=logger,
-                client=object(),  # type: ignore[arg-type]
+                client=object(),
                 command="whoami",
             ):
                 pass
@@ -562,7 +562,7 @@ class RecordingBytesIO(BytesIO):
         self.writes: list[bytes] = []
         self.closed_by_run_with_logger = False
 
-    def write(self, b: bytes) -> int:
+    def write(self, b: Any) -> int:
         self.writes.append(b)
         return super().write(b)
 
