@@ -5,15 +5,13 @@ independently while the process is running.
 
 ## What it can do
 
-- Run local commands with a `subprocess.run`-style API.
-- Log `stdout` and/or `stderr` line by line while the process is running.
-- Capture `stdout` and/or `stderr` into the returned `CompletedProcess`.
-- Discard streams you do not need.
-- Feed bytes or a binary file object to `stdin`.
-- Pass `cwd`, `shell`, `extra_env`, `encoding`, `level`, and `creationflags` through to the subprocess.
-- Raise `CalledProcessError` on non-zero exit codes when `check=True`.
-- Use a context manager when you need access to the running process and incrementally captured output.
-- Run remote commands over SSH with either `paramiko.SSHClient` or `fabric.Connection` when installed with the `ssh` extra.
+- Run local commands.
+- Run remote commands over SSH.
+- For each output stream (`stdout` and `stderr`), choose independently whether to log, capture, or discard it.
+- Pipe bytes or files to `stdin`.
+- Pass environment variables to the subprocess (even via SSH if the server's `AcceptEnv` setting allows it).
+- Support many of the same arguments as `subprocess.run`.
+- Provide access to the running process and incrementally captured output via a context manager.
 
 ## Examples
 
@@ -59,8 +57,6 @@ completed = run_with_logger(
     stderr_action="discard",
     check=False,
 )
-
-print(completed.stdout)  # None, because stdout was logged instead of captured
 ```
 
 ### Capture both streams
@@ -86,8 +82,6 @@ print(completed.stderr.decode().strip())  # "err"
 
 ### Choose the log level and decoding
 
-Logged stream lines use `level` and `encoding`.
-
 ```python
 from logging import INFO, getLogger
 from run_with_logger import run_with_logger
@@ -104,9 +98,7 @@ run_with_logger(
 )
 ```
 
-### Send data to `stdin`
-
-Pass bytes with `stdin_data`.
+### Send bytes to `stdin`
 
 ```python
 from logging import getLogger
@@ -125,9 +117,7 @@ completed = run_with_logger(
 print(completed.stdout.decode().strip())  # "HELLO"
 ```
 
-### Send a file object to `stdin`
-
-Use `stdin_io` when another file-like object should be passed directly to the subprocess.
+### Pipe a file to `stdin`
 
 ```python
 from logging import getLogger
@@ -146,8 +136,6 @@ with input_path.open("rb") as stdin:
         stderr_action="capture",
     )
 ```
-
-Only one of `stdin_data` or `stdin_io` may be supplied.
 
 ### Add environment variables
 
@@ -191,7 +179,8 @@ completed = run_with_logger(
 
 ### Handle non-zero exit codes
 
-With the default `check=True`, non-zero exits raise `CalledProcessError`. Captured streams are attached to the exception.
+With the default `check=True`, non-zero exits raise `CalledProcessError`.
+Captured streams are attached to the exception.
 
 ```python
 from logging import getLogger
@@ -212,11 +201,30 @@ except CalledProcessError as error:
     print(error.output.decode())  # captured stdout
 ```
 
-Set `check=False` when you want to inspect the returned `CompletedProcess` yourself.
+Set `check=False` when you want to inspect the return code yourself:
+
+```python
+from logging import getLogger
+from subprocess import CalledProcessError
+from run_with_logger import run_with_logger
+
+logger = getLogger(__name__)
+
+completed = run_with_logger(
+    args=["python", "-c", "import sys; print('bad'); sys.exit(2)"],
+    logger=logger,
+    stdout_action="capture",
+    stderr_action="capture",
+    check=False,
+)
+print(completed.returncode)       # 2
+print(completed.output.decode())  # captured stdout
+```
 
 ### Inspect a running process
 
-Use `run_with_logger__cm` if you need access to the `Popen` object while the process is still running. Captured streams are available as `BytesIO` buffers.
+Use `run_with_logger__cm` if you need access to the `Popen` object while the process is still running.
+Captured streams are available as `BytesIO` buffers.
 
 ```python
 from io import BytesIO
