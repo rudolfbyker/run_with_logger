@@ -73,7 +73,7 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         self.assertEqual(b"OUT\n", completed.stdout)
         self.assertEqual(b"ERR\n", completed.stderr)
 
-    def test_paramiko__check_true_raises_called_process_error_with_captured_streams(
+    def test_paramiko__nonzero_exit_raises_called_process_error_with_captured_streams(
         self,
     ) -> None:
         logger = getLogger(__name__)
