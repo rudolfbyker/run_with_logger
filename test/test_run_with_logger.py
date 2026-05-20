@@ -1,9 +1,11 @@
 import json
 import sys
 import unittest
+from io import BytesIO
 from logging import getLogger, DEBUG, INFO
 from os import environ
 from pathlib import Path
+from subprocess import CalledProcessError
 from tempfile import TemporaryDirectory
 from typing import List
 
@@ -261,3 +263,56 @@ print(b, file=sys.stderr)
                 )
                 self.assertEqual("Hello", completed.stdout.decode().strip())
                 self.assertEqual("World", completed.stderr.decode().strip())
+
+    def test_stdin_data_and_stdin_io_conflict(self) -> None:
+        logger = getLogger(__name__)
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Only one of `stdin_io` or `stdin_data` may be specified\.",
+        ):
+            run_with_logger(
+                logger=logger,
+                args=[sys.executable, "-c", "print('ok')"],
+                stdin_data=b"Hello World",
+                stdin_io=BytesIO(b"Hello World"),
+            )
+
+    def test_check_true_raises_called_process_error_with_captured_streams(self) -> None:
+        logger = getLogger(__name__)
+        script = """\
+import sys
+print("OUT")
+print("ERR", file=sys.stderr)
+sys.exit(7)
+"""
+        with self.assertRaises(CalledProcessError) as cm:
+            run_with_logger(
+                logger=logger,
+                args=[sys.executable, "-c", script],
+                check=True,
+                stdout_action="capture",
+                stderr_action="capture",
+            )
+
+        e = cm.exception
+        self.assertEqual(7, e.returncode)
+        self.assertEqual(b"OUT\n", e.output)
+        self.assertEqual(b"ERR\n", e.stderr)
+
+    def test_discard_both_streams_returns_none_streams(self) -> None:
+        logger = getLogger(__name__)
+        script = """\
+import sys
+print("OUT")
+print("ERR", file=sys.stderr)
+"""
+        completed = run_with_logger(
+            logger=logger,
+            args=[sys.executable, "-c", script],
+            stdout_action="discard",
+            stderr_action="discard",
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode)
+        self.assertIsNone(completed.stdout)
+        self.assertIsNone(completed.stderr)
