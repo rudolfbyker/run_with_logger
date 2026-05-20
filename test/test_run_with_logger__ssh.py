@@ -15,7 +15,7 @@ from run_with_logger import run_with_logger__ssh, run_with_logger__ssh__cm
 
 
 class TestRunWithLoggerSsh(unittest.TestCase):
-    def test_invalid_client_type_raises_value_error(self) -> None:
+    def test_invalid_client_type__raises_value_error(self) -> None:
         logger = getLogger(__name__)
 
         with self.assertRaisesRegex(
@@ -29,7 +29,7 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             ):
                 pass
 
-    def test_disconnected_paramiko_client_raises_value_error(self) -> None:
+    def test_disconnected_paramiko_client__raises_value_error(self) -> None:
         logger = getLogger(__name__)
         ssh_client = SSHClient()
 
