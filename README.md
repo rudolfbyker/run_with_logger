@@ -205,7 +205,6 @@ Set `check=False` when you want to inspect the return code yourself:
 
 ```python
 from logging import getLogger
-from subprocess import CalledProcessError
 from run_with_logger import run_with_logger
 
 logger = getLogger(__name__)
@@ -218,7 +217,7 @@ completed = run_with_logger(
     check=False,
 )
 print(completed.returncode)       # 2
-print(completed.output.decode())  # captured stdout
+print(completed.stdout.decode())  # captured stdout
 ```
 
 ### Inspect a running process
@@ -227,6 +226,7 @@ Use `run_with_logger__cm` if you need access to the `Popen` object while the pro
 Captured streams are available as `BytesIO` buffers.
 
 ```python
+import time
 from io import BytesIO
 from logging import getLogger
 from run_with_logger import run_with_logger__cm
@@ -234,7 +234,7 @@ from run_with_logger import run_with_logger__cm
 logger = getLogger(__name__)
 
 with run_with_logger__cm(
-    args=["python", "-c", "import time; print('one'); time.sleep(1); print('two')"],
+    args=["python", "-uc", "import time; print('one'); time.sleep(1); print('two')"],
     logger=logger,
     stdout_action="capture",
     stderr_action="capture",
@@ -245,6 +245,7 @@ with run_with_logger__cm(
     while info["process"].poll() is None:
         partial_stdout = stdout_buffer.getvalue()
         # Do something with partial_stdout while the process runs.
+        time.sleep(0.1)
 
 completed = info["completed"]
 ```
