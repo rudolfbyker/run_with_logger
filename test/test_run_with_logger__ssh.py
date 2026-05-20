@@ -1,18 +1,110 @@
 import socket
 import unittest
 from contextlib import contextmanager
+from io import BytesIO
 from logging import getLogger, INFO
-from subprocess import run
+from subprocess import CalledProcessError, run
 from time import sleep, monotonic
 from typing import Generator
+from unittest.mock import patch
 from uuid import uuid4
 
 from paramiko import SSHClient, AutoAddPolicy
 
-from run_with_logger import run_with_logger__ssh
+from run_with_logger import run_with_logger__ssh, run_with_logger__ssh__cm
 
 
 class TestRunWithLoggerSsh(unittest.TestCase):
+    def test_invalid_client_type_raises_value_error(self) -> None:
+        logger = getLogger(__name__)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "`client` must be either a `paramiko.SSHClient` or a `fabric.Connection`.",
+        ):
+            with run_with_logger__ssh__cm(
+                logger=logger,
+                client=object(),  # type: ignore[arg-type]
+                command="whoami",
+            ):
+                pass
+
+    def test_disconnected_paramiko_client_raises_value_error(self) -> None:
+        logger = getLogger(__name__)
+        ssh_client = SSHClient()
+
+        with self.assertRaisesRegex(ValueError, "SSH client is not connected."):
+            with run_with_logger__ssh__cm(
+                logger=logger,
+                client=ssh_client,
+                command="whoami",
+            ):
+                pass
+
+    def test_paramiko__stdin_data(self) -> None:
+        logger = getLogger(__name__)
+        ssh_client = SSHClient()
+        channel = FakeChannel(exit_status=0)
+        stdin_stream = RecordingBytesIO()
+        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
+        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
+
+        with (
+            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
+            patch.object(
+                ssh_client,
+                "exec_command",
+                return_value=(stdin_stream, stdout_stream, stderr_stream),
+            ) as exec_command,
+        ):
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="cat",
+                stdin_data=b"IN\n",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
+
+        exec_command.assert_called_once_with(command="cat", environment=None)
+        self.assertEqual([b"IN\n"], stdin_stream.writes)
+        self.assertTrue(stdin_stream.closed_by_run_with_logger)
+        self.assertEqual(0, completed.returncode)
+        self.assertEqual(b"OUT\n", completed.stdout)
+        self.assertEqual(b"ERR\n", completed.stderr)
+
+    def test_paramiko__check_true_raises_called_process_error_with_captured_streams(
+        self,
+    ) -> None:
+        logger = getLogger(__name__)
+        ssh_client = SSHClient()
+        channel = FakeChannel(exit_status=5)
+        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
+        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
+
+        with (
+            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
+            patch.object(
+                ssh_client,
+                "exec_command",
+                return_value=(RecordingBytesIO(), stdout_stream, stderr_stream),
+            ),
+        ):
+            with self.assertRaises(CalledProcessError) as cm:
+                run_with_logger__ssh(
+                    logger=logger,
+                    client=ssh_client,
+                    command="exit 5",
+                    stdout_action="capture",
+                    stderr_action="capture",
+                )
+
+        e = cm.exception
+        self.assertEqual(5, e.returncode)
+        self.assertEqual("exit 5", e.cmd)
+        self.assertEqual(b"OUT\n", e.output)
+        self.assertEqual(b"ERR\n", e.stderr)
+
     def test_paramiko__capture_stdout(self) -> None:
         logger = getLogger(__name__)
 
@@ -443,3 +535,37 @@ def stop_and_remove_container(*, name: str) -> None:
             return
 
         logger.error(f"Failed to remove container `{name}`:\n{completed.stderr}")
+
+
+class FakeTransport:
+    def is_active(self) -> bool:
+        return True
+
+
+class FakeChannel:
+    def __init__(self, *, exit_status: int):
+        self.exit_status = exit_status
+
+    def recv_exit_status(self) -> int:
+        return self.exit_status
+
+
+class FakeChannelBytesIO(BytesIO):
+    def __init__(self, initial_bytes: bytes, *, channel: FakeChannel):
+        super().__init__(initial_bytes)
+        self.channel = channel
+
+
+class RecordingBytesIO(BytesIO):
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes: list[bytes] = []
+        self.closed_by_run_with_logger = False
+
+    def write(self, b: bytes) -> int:
+        self.writes.append(b)
+        return super().write(b)
+
+    def close(self) -> None:
+        self.closed_by_run_with_logger = True
+        super().close()
