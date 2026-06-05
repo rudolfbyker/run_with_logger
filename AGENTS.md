@@ -12,7 +12,7 @@
 
 ## Type checking
 
-- Use `venv/bin/mypy`.
+- Use `PYTHONPATH=src venv/bin/mypy`.
 - Never run `mypy` on ignored files.
 - Install requirements using `venv/bin/pip install -r mypy-requirements.txt` if necessary.
 - To check the entire repo: `venv/bin/mypy .`.
