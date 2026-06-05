@@ -3,10 +3,9 @@ import sys
 import unittest
 from contextlib import contextmanager
 from logging import getLogger
-from subprocess import run
+from subprocess import run, CalledProcessError
 from time import monotonic, sleep
 from typing import Generator
-from uuid import uuid4
 
 from test.docker_util import DockerPauseController
 
@@ -72,35 +71,44 @@ def ssh_server(
     if sys.platform == "win32":
         raise unittest.SkipTest("SSH integration tests require Linux containers.")
 
-    container_name = f"ssh-server-{uuid4()}"
+    container_name = f"ssh-server-{port}"
+    stop_and_remove_container(name=container_name)
     control = SshServerController(
         container_name=container_name,
         host="localhost",
         port=port,
     )
     try:
-        run(
-            args=[
-                "docker",
-                "container",
-                "run",
-                "--name",
-                container_name,
-                "--rm",
-                "-d",
-                "-p",
-                f"{port}:2222",
-                "-e",
-                f"USER_NAME={username}",
-                "-e",
-                f"USER_PASSWORD={password}",
-                "-e",
-                f"PASSWORD_ACCESS=true",
-                "linuxserver/openssh-server",
-            ],
-            check=True,
-            capture_output=True,
-        )
+        try:
+            run(
+                args=[
+                    "docker",
+                    "container",
+                    "run",
+                    "--name",
+                    container_name,
+                    "--rm",
+                    "-d",
+                    "-p",
+                    f"{port}:2222",
+                    "-e",
+                    f"USER_NAME={username}",
+                    "-e",
+                    f"USER_PASSWORD={password}",
+                    "-e",
+                    f"PASSWORD_ACCESS=true",
+                    "linuxserver/openssh-server",
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        except CalledProcessError as e:
+            if e.stderr:
+                logger.error(e.stderr)
+            if e.stdout:
+                logger.error(e.stdout)
+            raise
 
         control.wait_for_banner(timeout=10, poll_period=0.1)
 
