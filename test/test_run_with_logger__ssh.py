@@ -1,11 +1,12 @@
 import unittest
 from contextlib import contextmanager, closing
+from datetime import timedelta
 from logging import getLogger, INFO
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, CompletedProcess
 from typing import ClassVar, ContextManager, Generator, Tuple
 
 from fabric import Connection
-from paramiko import SSHClient, AutoAddPolicy
+from paramiko import SSHClient, AutoAddPolicy, SSHException
 
 from run_with_logger import run_with_logger__ssh, run_with_logger__ssh__cm
 from .ssh_util import ssh_server, SshServerController
@@ -346,3 +347,44 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             self.assertEqual(0, completed.returncode)
             self.assertIsNone(completed.stdout)
             self.assertIsNone(completed.stderr)
+
+    def test_channel_timeout(self) -> None:
+        """
+        Test the channel timeout.
+        """
+        logger = getLogger(__name__)
+
+        _, ssh_server_control = self.ensure_ssh_server()
+
+        for client_cm in [self.paramiko_client, self.fabric_connection]:
+            with self.subTest():
+                # We are not testing the timeout for the initial connection.
+                # That happens before our function is called!
+                with client_cm() as ssh_client:
+
+                    def run() -> CompletedProcess:
+                        return run_with_logger__ssh(
+                            logger=logger,
+                            level=INFO,
+                            client=ssh_client,
+                            command="whoami",
+                            stdout_action="log",
+                            stderr_action="log",
+                            check=False,
+                            channel_timeout=timedelta(seconds=0.1),
+                        )
+
+                    with self.assertLogs(level=INFO, logger=logger) as logs:
+
+                        # The server is still responsive at this point:
+                        first_run = run()
+                        self.assertEqual(0, first_run.returncode)
+
+                        # The server goes unresponsive at this point:
+                        with ssh_server_control.temporarily_paused():
+                            with self.assertRaises(SSHException):
+                                run()
+
+                    self.assertEqual(
+                        ["user"], [r.message.strip() for r in logs.records]
+                    )
