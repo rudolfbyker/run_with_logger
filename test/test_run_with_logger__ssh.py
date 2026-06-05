@@ -1,6 +1,7 @@
 import socket
 import unittest
 from contextlib import contextmanager
+from datetime import timedelta
 from io import BytesIO
 from logging import getLogger, INFO
 from subprocess import CalledProcessError, run
@@ -66,7 +67,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 stderr_action="capture",
             )
 
-        exec_command.assert_called_once_with(command="cat", environment=None)
+        exec_command.assert_called_once_with(
+            command="cat", environment=None, timeout=None
+        )
         stdin_stream.write.assert_called_once_with(b"IN\n")
         stdin_stream.close.assert_called_once_with()
         self.assertEqual(0, completed.returncode)
@@ -104,6 +107,36 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         self.assertEqual("exit 5", e.cmd)
         self.assertEqual(b"OUT\n", e.output)
         self.assertEqual(b"ERR\n", e.stderr)
+
+    def test_paramiko__command_timeout_finishing_before_deadline_returns_completed(
+        self,
+    ) -> None:
+        logger = getLogger(__name__)
+        ssh_client = SSHClient()
+        channel = FakeChannel(exit_status=0)
+        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
+        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
+
+        with (
+            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
+            patch.object(
+                ssh_client,
+                "exec_command",
+                return_value=(Mock(), stdout_stream, stderr_stream),
+            ),
+        ):
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="echo OUT",
+                command_timeout=timedelta(seconds=1),
+                stdout_action="capture",
+                stderr_action="capture",
+            )
+
+        self.assertEqual(0, completed.returncode)
+        self.assertEqual(b"OUT\n", completed.stdout)
+        self.assertEqual(b"ERR\n", completed.stderr)
 
     def test_paramiko__capture_stdout(self) -> None:
         logger = getLogger(__name__)
@@ -545,6 +578,12 @@ class FakeTransport:
 class FakeChannel:
     def __init__(self, *, exit_status: int):
         self.exit_status = exit_status
+
+    def close(self) -> None:
+        pass
+
+    def exit_status_ready(self) -> bool:
+        return True
 
     def recv_exit_status(self) -> int:
         return self.exit_status
