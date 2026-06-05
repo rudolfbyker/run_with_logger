@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from io import BytesIO
 from logging import getLogger, INFO
-from subprocess import CalledProcessError, run
+from subprocess import CalledProcessError, TimeoutExpired, run
 from time import sleep, monotonic
 from typing import Generator
 from unittest.mock import Mock, patch
@@ -76,6 +76,37 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         self.assertEqual(b"OUT\n", completed.stdout)
         self.assertEqual(b"ERR\n", completed.stderr)
 
+    def test_paramiko__channel_timeout_passed_to_exec_command(self) -> None:
+        logger = getLogger(__name__)
+        ssh_client = SSHClient()
+        channel = FakeChannel(exit_status=0)
+        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
+        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
+
+        with (
+            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
+            patch.object(
+                ssh_client,
+                "exec_command",
+                return_value=(Mock(), stdout_stream, stderr_stream),
+            ) as exec_command,
+        ):
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="echo OUT",
+                channel_timeout=timedelta(seconds=3),
+                stdout_action="capture",
+                stderr_action="capture",
+            )
+
+        exec_command.assert_called_once_with(
+            command="echo OUT", environment=None, timeout=3.0
+        )
+        self.assertEqual(0, completed.returncode)
+        self.assertEqual(b"OUT\n", completed.stdout)
+        self.assertEqual(b"ERR\n", completed.stderr)
+
     def test_paramiko__nonzero_exit_raises_called_process_error_with_captured_streams(
         self,
     ) -> None:
@@ -137,6 +168,40 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         self.assertEqual(0, completed.returncode)
         self.assertEqual(b"OUT\n", completed.stdout)
         self.assertEqual(b"ERR\n", completed.stderr)
+
+    def test_paramiko__command_timeout_closes_channel_and_raises_timeout_expired(
+        self,
+    ) -> None:
+        logger = getLogger(__name__)
+        ssh_client = SSHClient()
+        channel = FakeChannel(exit_status=0, exit_status_ready=False)
+        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
+        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
+
+        with (
+            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
+            patch.object(
+                ssh_client,
+                "exec_command",
+                return_value=(Mock(), stdout_stream, stderr_stream),
+            ),
+        ):
+            with self.assertRaises(TimeoutExpired) as cm:
+                run_with_logger__ssh(
+                    logger=logger,
+                    client=ssh_client,
+                    command="sleep 10",
+                    command_timeout=timedelta(seconds=0.01),
+                    stdout_action="capture",
+                    stderr_action="capture",
+                )
+
+        e = cm.exception
+        self.assertTrue(channel.closed)
+        self.assertEqual("sleep 10", e.cmd)
+        self.assertAlmostEqual(0.01, e.timeout)
+        self.assertEqual(b"OUT\n", e.output)
+        self.assertEqual(b"ERR\n", e.stderr)
 
     def test_paramiko__capture_stdout(self) -> None:
         logger = getLogger(__name__)
@@ -576,14 +641,17 @@ class FakeTransport:
 
 
 class FakeChannel:
-    def __init__(self, *, exit_status: int):
+    def __init__(self, *, exit_status: int, exit_status_ready: bool = True):
         self.exit_status = exit_status
+        self.closed = False
+        self._exit_status_ready = exit_status_ready
 
     def close(self) -> None:
-        pass
+        self.closed = True
+        self._exit_status_ready = True
 
     def exit_status_ready(self) -> bool:
-        return True
+        return self._exit_status_ready
 
     def recv_exit_status(self) -> int:
         return self.exit_status

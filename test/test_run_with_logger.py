@@ -1,15 +1,17 @@
 import json
 import sys
 import unittest
+from datetime import timedelta
 from io import BytesIO
 from logging import getLogger, DEBUG, INFO
 from os import environ
 from pathlib import Path
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, TimeoutExpired
 from tempfile import TemporaryDirectory
+from time import monotonic, sleep
 from typing import List
 
-from run_with_logger import run_with_logger
+from run_with_logger import run_with_logger, run_with_logger__cm
 
 
 class TestRunWithLogger(unittest.TestCase):
@@ -298,6 +300,45 @@ sys.exit(7)
         self.assertEqual(7, e.returncode)
         self.assertEqual(b"OUT\n", e.output)
         self.assertEqual(b"ERR\n", e.stderr)
+
+    def test_timeout_raises_timeout_expired_with_captured_streams(self) -> None:
+        logger = getLogger(__name__)
+        script = """\
+import sys
+import time
+
+print("OUT", flush=True)
+print("ERR", file=sys.stderr, flush=True)
+time.sleep(10)
+"""
+        args = [sys.executable, "-u", "-c", script]
+
+        with self.assertRaises(TimeoutExpired) as cm:
+            with run_with_logger__cm(
+                logger=logger,
+                args=args,
+                stdout_action="capture",
+                stderr_action="capture",
+                timeouts=(timedelta(seconds=0.5), timedelta(seconds=2)),
+            ) as info:
+                deadline = monotonic() + 2
+                assert info["stdout_buffer"] is not None
+                assert info["stderr_buffer"] is not None
+                while (
+                    not info["stdout_buffer"].getvalue()
+                    or not info["stderr_buffer"].getvalue()
+                ):
+                    if monotonic() >= deadline:
+                        self.fail("Timed out waiting for child process output.")
+                    sleep(0.01)
+
+        e = cm.exception
+        self.assertEqual(args, e.cmd)
+        self.assertAlmostEqual(0.5, e.timeout)
+        assert e.output is not None
+        assert e.stderr is not None
+        self.assertEqual(["OUT"], e.output.decode().splitlines())
+        self.assertEqual(["ERR"], e.stderr.decode().splitlines())
 
     def test_discard_both_streams_returns_none_streams(self) -> None:
         logger = getLogger(__name__)
