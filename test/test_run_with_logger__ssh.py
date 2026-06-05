@@ -1,4 +1,5 @@
 import socket
+import sys
 import unittest
 from contextlib import contextmanager
 from io import BytesIO
@@ -440,6 +441,9 @@ def ssh_server(
     """
     Spin up a temporary SSH server for testing.
     """
+    if sys.platform == "win32":
+        raise unittest.SkipTest("SSH integration tests require Linux containers.")
+
     container_name = f"ssh-server-{uuid4()}"
     try:
         run(

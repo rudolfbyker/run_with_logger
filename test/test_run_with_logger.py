@@ -296,8 +296,8 @@ sys.exit(7)
 
         e = cm.exception
         self.assertEqual(7, e.returncode)
-        self.assertEqual(b"OUT\n", e.output)
-        self.assertEqual(b"ERR\n", e.stderr)
+        self.assertEqual(["OUT"], e.output.decode().splitlines())
+        self.assertEqual(["ERR"], e.stderr.decode().splitlines())
 
     def test_discard_both_streams_returns_none_streams(self) -> None:
         logger = getLogger(__name__)
