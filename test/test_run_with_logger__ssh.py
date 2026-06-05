@@ -1,22 +1,82 @@
-import socket
-import sys
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
+from datetime import timedelta
 from io import BytesIO
 from logging import getLogger, INFO
-from subprocess import CalledProcessError, run
-from time import sleep, monotonic
-from typing import Generator
-from unittest.mock import Mock, patch
-from uuid import uuid4
+from subprocess import CalledProcessError, CompletedProcess, TimeoutExpired
+from typing import ClassVar, ContextManager, Generator, IO, List, Tuple, cast
+from unittest.mock import patch
 
-from paramiko import SSHClient, AutoAddPolicy
+from fabric import Connection
+from paramiko import SSHClient, AutoAddPolicy, SSHException
 
 from run_with_logger import run_with_logger__ssh, run_with_logger__ssh__cm
+from .ssh_util import ssh_server, SshServerController
 
 
 class TestRunWithLoggerSsh(unittest.TestCase):
+    ssh_host: ClassVar[str] = "localhost"
+    ssh_port: ClassVar[int] = 54321
+    ssh_username: ClassVar[str] = "user"
+    ssh_password: ClassVar[str] = "password"
+    ssh_server: ClassVar[
+        Tuple[ContextManager[SshServerController], SshServerController] | None
+    ] = None
+
+    @classmethod
+    def ensure_ssh_server(
+        cls,
+    ) -> Tuple[ContextManager[SshServerController], SshServerController]:
+        if cls.ssh_server is not None:
+            return cls.ssh_server
+
+        cm = ssh_server(
+            port=cls.ssh_port,
+            username=cls.ssh_username,
+            password=cls.ssh_password,
+        )
+        control = cm.__enter__()
+        cls.ssh_server = cm, control
+        cls.addClassCleanup(cls.stop_ssh_server)
+        return cls.ssh_server
+
+    @classmethod
+    def stop_ssh_server(cls) -> None:
+        if cls.ssh_server is None:
+            return
+        cm, control = cls.ssh_server
+        cm.__exit__(None, None, None)
+
+    @contextmanager
+    def paramiko_client(self) -> Generator[SSHClient, None, None]:
+        self.ensure_ssh_server()
+        with closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname=self.ssh_host,
+                port=self.ssh_port,
+                username=self.ssh_username,
+                password=self.ssh_password,
+            )
+            yield ssh_client
+
+    @contextmanager
+    def fabric_connection(self) -> Generator[Connection, None, None]:
+        self.ensure_ssh_server()
+        with Connection(
+            host=self.ssh_host,
+            port=self.ssh_port,
+            user=self.ssh_username,
+            connect_kwargs={
+                "password": self.ssh_password,
+            },
+        ) as conn:
+            yield conn
+
     def test_invalid_client_type__raises_value_error(self) -> None:
+        """
+        The `client` argument must be `paramiko.SSHClient` or `fabric.Connection`.
+        """
         logger = getLogger(__name__)
 
         with self.assertRaisesRegex(
@@ -31,6 +91,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 pass
 
     def test_disconnected_paramiko_client__raises_value_error(self) -> None:
+        """
+        The `paramiko.SSHClient` must be connected.
+        """
         logger = getLogger(__name__)
         ssh_client = SSHClient()
 
@@ -43,518 +106,419 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 pass
 
     def test_paramiko__stdin_data(self) -> None:
+        """
+        Pass bytes to `stdin` while capturing `stdout` and `stderr`.
+        """
         logger = getLogger(__name__)
-        ssh_client = SSHClient()
-        channel = FakeChannel(exit_status=0)
-        stdin_stream = Mock()
-        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
-        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
 
-        with (
-            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
-            patch.object(
-                ssh_client,
-                "exec_command",
-                return_value=(stdin_stream, stdout_stream, stderr_stream),
-            ) as exec_command,
-        ):
+        with self.paramiko_client() as ssh_client:
             completed = run_with_logger__ssh(
                 logger=logger,
                 client=ssh_client,
-                command="cat",
+                command='cat; echo "ERR" >&2',
                 stdin_data=b"IN\n",
                 stdout_action="capture",
                 stderr_action="capture",
             )
 
-        exec_command.assert_called_once_with(command="cat", environment=None)
-        stdin_stream.write.assert_called_once_with(b"IN\n")
-        stdin_stream.close.assert_called_once_with()
-        self.assertEqual(0, completed.returncode)
-        self.assertEqual(b"OUT\n", completed.stdout)
-        self.assertEqual(b"ERR\n", completed.stderr)
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual(["IN"], completed.stdout.decode().splitlines())
+            self.assertEqual(["ERR"], completed.stderr.decode().splitlines())
 
     def test_paramiko__nonzero_exit_raises_called_process_error_with_captured_streams(
         self,
     ) -> None:
+        """
+        Using `check=True` while capturing streams should still raise `CalledProcessError` for non-zero exit codes.
+        """
         logger = getLogger(__name__)
-        ssh_client = SSHClient()
-        channel = FakeChannel(exit_status=5)
-        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
-        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
 
-        with (
-            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
-            patch.object(
-                ssh_client,
-                "exec_command",
-                return_value=(Mock(), stdout_stream, stderr_stream),
-            ),
-        ):
+        with self.paramiko_client() as ssh_client:
+            command = '/bin/sh -c \'echo "OUT"; echo "ERR" >&2; exit 5\''
             with self.assertRaises(CalledProcessError) as cm:
                 run_with_logger__ssh(
                     logger=logger,
                     client=ssh_client,
-                    command="exit 5",
+                    command=command,
                     stdout_action="capture",
                     stderr_action="capture",
                 )
 
         e = cm.exception
         self.assertEqual(5, e.returncode)
-        self.assertEqual("exit 5", e.cmd)
+        self.assertEqual(command, e.cmd)
         self.assertEqual(b"OUT\n", e.output)
         self.assertEqual(b"ERR\n", e.stderr)
 
     def test_paramiko__capture_stdout(self) -> None:
+        """
+        Capture `stdout` from a successful command with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                completed = run_with_logger__ssh(
-                    logger=logger,
-                    client=ssh_client,
-                    command="whoami",
-                    stdout_action="capture",
-                    stderr_action="capture",
-                )
-
-                self.assertEqual(0, completed.returncode)
-                self.assertEqual(username, completed.stdout.decode().strip())
-                self.assertEqual("", completed.stderr.decode().strip())
-            finally:
-                ssh_client.close()
-
-    def test_paramiko__capture_stderr(self) -> None:
-        logger = getLogger(__name__)
-
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                completed = run_with_logger__ssh(
-                    logger=logger,
-                    client=ssh_client,
-                    command="whoami >&2",
-                    stdout_action="capture",
-                    stderr_action="capture",
-                )
-
-                self.assertEqual(0, completed.returncode)
-                self.assertEqual("", completed.stdout.decode().strip())
-                self.assertEqual(username, completed.stderr.decode().strip())
-            finally:
-                ssh_client.close()
-
-    def test_fabric__capture_stdout(self) -> None:
-        from fabric import Connection
-
-        logger = getLogger(__name__)
-
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            with Connection(
-                host="localhost",
-                port=port,
-                user=username,
-                connect_kwargs={
-                    "password": password,
-                },
-            ) as conn:
-                completed = run_with_logger__ssh(
-                    logger=logger,
-                    client=conn,
-                    command="whoami",
-                    stdout_action="capture",
-                    stderr_action="capture",
-                )
+        with self.paramiko_client() as ssh_client:
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="whoami",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
 
             self.assertEqual(0, completed.returncode)
-            self.assertEqual(username, completed.stdout.decode().strip())
+            self.assertEqual(self.ssh_username, completed.stdout.decode().strip())
             self.assertEqual("", completed.stderr.decode().strip())
 
-    def test_fabric__capture_stderr(self) -> None:
-        from fabric import Connection
-
+    def test_paramiko__capture_stderr(self) -> None:
+        """
+        Capture `stderr` from a successful command with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            with Connection(
-                host="localhost",
-                port=port,
-                user=username,
-                connect_kwargs={
-                    "password": password,
-                },
-            ) as conn:
-                completed = run_with_logger__ssh(
-                    logger=logger,
-                    client=conn,
-                    command="whoami >&2",
-                    stdout_action="capture",
-                    stderr_action="capture",
-                )
+        with self.paramiko_client() as ssh_client:
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="whoami >&2",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
 
             self.assertEqual(0, completed.returncode)
             self.assertEqual("", completed.stdout.decode().strip())
-            self.assertEqual(username, completed.stderr.decode().strip())
+            self.assertEqual(self.ssh_username, completed.stderr.decode().strip())
+
+    def test_fabric__capture_stdout(self) -> None:
+        """
+        Capture `stdout` from a successful command with a `fabric.Connection`.
+        """
+        logger = getLogger(__name__)
+
+        with self.fabric_connection() as conn:
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=conn,
+                command="whoami",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual(self.ssh_username, completed.stdout.decode().strip())
+            self.assertEqual("", completed.stderr.decode().strip())
+
+    def test_fabric__capture_stderr(self) -> None:
+        """
+        Capture `stderr` from a successful command with a `fabric.Connection`.
+        """
+        logger = getLogger(__name__)
+
+        with self.fabric_connection() as conn:
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=conn,
+                command="whoami >&2",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual("", completed.stdout.decode().strip())
+            self.assertEqual(self.ssh_username, completed.stderr.decode().strip())
 
     def test_paramiko__log_stdout(self) -> None:
+        """
+        Test logging `stdout` while discarding `stderr` with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                with self.assertLogs(level=INFO) as logs:
-                    completed = run_with_logger__ssh(
-                        logger=logger,
-                        level=INFO,
-                        client=ssh_client,
-                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
-                        stdout_action="log",
-                        stderr_action="discard",
-                        check=False,
-                    )
-
-                self.assertEqual(
-                    [
-                        (INFO, "One\n"),
-                        (INFO, "Two\n"),
-                        (INFO, "Three\n"),
-                    ],
-                    [(r.levelno, r.message) for r in logs.records],
+        with self.paramiko_client() as ssh_client:
+            with self.assertLogs(level=INFO) as logs:
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    level=INFO,
+                    client=ssh_client,
+                    command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
+                    stdout_action="log",
+                    stderr_action="discard",
+                    check=False,
                 )
 
-                self.assertEqual(0, completed.returncode)
-                self.assertIsNone(completed.stdout)
-                self.assertIsNone(completed.stderr)
-            finally:
-                ssh_client.close()
+            self.assertEqual(
+                [
+                    (INFO, "One\n"),
+                    (INFO, "Two\n"),
+                    (INFO, "Three\n"),
+                ],
+                [(r.levelno, r.message) for r in logs.records],
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertIsNone(completed.stdout)
+            self.assertIsNone(completed.stderr)
 
     def test_paramiko__log_stderr(self) -> None:
+        """
+        Test logging `stderr` while discarding `stdout` with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
+        with self.paramiko_client() as ssh_client:
+            with self.assertLogs(level=INFO) as logs:
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    level=INFO,
+                    client=ssh_client,
+                    command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
+                    stdout_action="discard",
+                    stderr_action="log",
+                    check=False,
                 )
-                with self.assertLogs(level=INFO) as logs:
-                    completed = run_with_logger__ssh(
+
+            self.assertEqual(
+                [
+                    (INFO, "One\n"),
+                    (INFO, "Two\n"),
+                    (INFO, "Three\n"),
+                ],
+                [(r.levelno, r.message) for r in logs.records],
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertIsNone(completed.stdout)
+            self.assertIsNone(completed.stderr)
+
+    def test_fabric__log_stdout(self) -> None:
+        """
+        Test logging `stdout` while discarding `stderr` with a `fabric.Connection`.
+        """
+        logger = getLogger(__name__)
+
+        with self.fabric_connection() as conn:
+            with self.assertLogs(level=INFO, logger=logger) as logs:
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    level=INFO,
+                    client=conn,
+                    command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
+                    stdout_action="log",
+                    stderr_action="discard",
+                    check=False,
+                )
+
+            self.assertEqual(
+                [
+                    (INFO, "One\n"),
+                    (INFO, "Two\n"),
+                    (INFO, "Three\n"),
+                ],
+                [(r.levelno, r.message) for r in logs.records],
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertIsNone(completed.stdout)
+            self.assertIsNone(completed.stderr)
+
+    def test_fabric__log_stderr(self) -> None:
+        """
+        Test logging `stderr` while discarding `stdout` with a `fabric.Connection`.
+        """
+        logger = getLogger(__name__)
+
+        with self.fabric_connection() as conn:
+            with self.assertLogs(level=INFO, logger=logger) as logs:
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    level=INFO,
+                    client=conn,
+                    command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
+                    stdout_action="discard",
+                    stderr_action="log",
+                    check=False,
+                )
+
+            self.assertEqual(
+                [
+                    (INFO, "One\n"),
+                    (INFO, "Two\n"),
+                    (INFO, "Three\n"),
+                ],
+                [(r.levelno, r.message) for r in logs.records],
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertIsNone(completed.stdout)
+            self.assertIsNone(completed.stderr)
+
+    def test_channel_timeout(self) -> None:
+        """
+        Test the channel timeout.
+        """
+        logger = getLogger(__name__)
+
+        _, ssh_server_control = self.ensure_ssh_server()
+
+        for client_cm in [self.paramiko_client, self.fabric_connection]:
+            with self.subTest():
+                # We are not testing the timeout for the initial connection.
+                # That happens before our function is called!
+                with client_cm() as ssh_client:
+
+                    def run() -> CompletedProcess[bytes]:
+                        return run_with_logger__ssh(
+                            logger=logger,
+                            level=INFO,
+                            client=ssh_client,
+                            command="whoami",
+                            stdout_action="log",
+                            stderr_action="log",
+                            check=False,
+                            channel_timeout=timedelta(seconds=0.1),
+                        )
+
+                    with self.assertLogs(level=INFO, logger=logger) as logs:
+
+                        # The server is still responsive at this point:
+                        first_run = run()
+                        self.assertEqual(0, first_run.returncode)
+
+                        # The server goes unresponsive at this point:
+                        with ssh_server_control.temporarily_paused():
+                            with self.assertRaises(SSHException):
+                                run()
+
+                    self.assertEqual(
+                        ["user"], [r.message.strip() for r in logs.records]
+                    )
+
+    def test_command_timeout(self) -> None:
+        """
+        Test what happens if the remote command runs for too long.
+        """
+        logger = getLogger(__name__)
+
+        _, ssh_server_control = self.ensure_ssh_server()
+
+        for client_cm in [self.paramiko_client, self.fabric_connection]:
+            with self.subTest():
+                with client_cm() as ssh_client:
+                    # Command shorter than timeout:
+                    run_with_logger__ssh(
                         logger=logger,
                         level=INFO,
                         client=ssh_client,
-                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
-                        stdout_action="discard",
-                        stderr_action="log",
-                        check=False,
-                    )
-
-                self.assertEqual(
-                    [
-                        (INFO, "One\n"),
-                        (INFO, "Two\n"),
-                        (INFO, "Three\n"),
-                    ],
-                    [(r.levelno, r.message) for r in logs.records],
-                )
-
-                self.assertEqual(0, completed.returncode)
-                self.assertIsNone(completed.stdout)
-                self.assertIsNone(completed.stderr)
-            finally:
-                ssh_client.close()
-
-    def test_fabric__log_stdout(self) -> None:
-        from fabric import Connection
-
-        logger = getLogger(__name__)
-
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            with Connection(
-                host="localhost",
-                port=port,
-                user=username,
-                connect_kwargs={
-                    "password": password,
-                },
-            ) as conn:
-                with self.assertLogs(level=INFO, logger=logger) as logs:
-                    completed = run_with_logger__ssh(
-                        logger=logger,
-                        level=INFO,
-                        client=conn,
-                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
+                        command="sleep 0.1",
                         stdout_action="log",
-                        stderr_action="discard",
-                        check=False,
-                    )
-
-                self.assertEqual(
-                    [
-                        (INFO, "One\n"),
-                        (INFO, "Two\n"),
-                        (INFO, "Three\n"),
-                    ],
-                    [(r.levelno, r.message) for r in logs.records],
-                )
-
-                self.assertEqual(0, completed.returncode)
-                self.assertIsNone(completed.stdout)
-                self.assertIsNone(completed.stderr)
-
-    def test_fabric__log_stderr(self) -> None:
-        from fabric import Connection
-
-        logger = getLogger(__name__)
-
-        port = 54321
-        username = "user"
-        password = "password"
-
-        with ssh_server(
-            port=port,
-            username=username,
-            password=password,
-        ):
-            with Connection(
-                host="localhost",
-                port=port,
-                user=username,
-                connect_kwargs={
-                    "password": password,
-                },
-            ) as conn:
-                with self.assertLogs(level=INFO, logger=logger) as logs:
-                    completed = run_with_logger__ssh(
-                        logger=logger,
-                        level=INFO,
-                        client=conn,
-                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
-                        stdout_action="discard",
                         stderr_action="log",
                         check=False,
+                        command_timeout=timedelta(seconds=1),
                     )
 
-                self.assertEqual(
-                    [
-                        (INFO, "One\n"),
-                        (INFO, "Two\n"),
-                        (INFO, "Three\n"),
-                    ],
-                    [(r.levelno, r.message) for r in logs.records],
+                    # Command longer than timeout:
+                    with self.assertRaises(TimeoutExpired):
+                        run_with_logger__ssh(
+                            logger=logger,
+                            level=INFO,
+                            client=ssh_client,
+                            command="sleep 1",
+                            stdout_action="log",
+                            stderr_action="log",
+                            check=False,
+                            command_timeout=timedelta(seconds=0.1),
+                        )
+
+    def test_command_timeout__exception_streams_include_reader_cleanup_capture(
+        self,
+    ) -> None:
+        """
+        Regression for timeout exceptions snapshotting streams too early.
+        `TimeoutExpired` should include bytes captured before the reader context has fully exited.
+
+        In real use, a process can write final stdout/stderr just before timeout termination,
+        leaving those bytes in the pipe until the capture thread drains them during context-manager cleanup.
+        This test fakes that late drain to make the expected behavior deterministic.
+        """
+        stdout_tail = b"stdout drained during reader cleanup\n"
+        stderr_tail = b"stderr drained during reader cleanup\n"
+        cleanup_chunks = [stdout_tail, stderr_tail]
+        destinations: List[BytesIO] = []
+
+        class FakeTransport:
+            def is_active(self) -> bool:
+                return True
+
+        class FakeChannel:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+            def exit_status_ready(self) -> bool:
+                return False
+
+            def recv_exit_status(self) -> int:
+                return 0
+
+        class FakeStream(BytesIO):
+            def __init__(self, channel: FakeChannel) -> None:
+                super().__init__()
+                self.channel = channel
+
+        class FakeSshClient:
+            def __init__(self) -> None:
+                self.channel = FakeChannel()
+
+            def get_transport(self) -> FakeTransport:
+                return FakeTransport()
+
+            def exec_command(
+                self,
+                *,
+                command: str,
+                environment: dict[str, str] | None,
+                timeout: float | None,
+            ) -> Tuple[BytesIO, FakeStream, FakeStream]:
+                del command, environment, timeout
+                return (
+                    BytesIO(),
+                    FakeStream(self.channel),
+                    FakeStream(self.channel),
                 )
 
-                self.assertEqual(0, completed.returncode)
-                self.assertIsNone(completed.stdout)
-                self.assertIsNone(completed.stderr)
+        @contextmanager
+        def delayed_capture_thread(
+            *,
+            pipe: IO[bytes] | IO[str],
+            destination: BytesIO,
+        ) -> Generator[None, None, None]:
+            del pipe
+            chunk_index = len(destinations)
+            destinations.append(destination)
+            try:
+                yield
+            finally:
+                destination.write(cleanup_chunks[chunk_index])
 
+        with patch("paramiko.SSHClient", FakeSshClient):
+            with patch(
+                "run_with_logger._run_with_logger__ssh.pipe_capture__thread",
+                delayed_capture_thread,
+            ):
+                with self.assertRaises(TimeoutExpired) as cm:
+                    run_with_logger__ssh(
+                        logger=getLogger(__name__),
+                        client=cast(SSHClient, FakeSshClient()),
+                        command="sleep 10",
+                        stdout_action="capture",
+                        stderr_action="capture",
+                        check=False,
+                        command_timeout=timedelta(seconds=0.01),
+                    )
 
-@contextmanager
-def ssh_server(
-    *,
-    port: int,
-    username: str,
-    password: str,
-) -> Generator[None, None, None]:
-    """
-    Spin up a temporary SSH server for testing.
-    """
-    if sys.platform == "win32":
-        raise unittest.SkipTest("SSH integration tests require Linux containers.")
-
-    container_name = f"ssh-server-{uuid4()}"
-    try:
-        run(
-            args=[
-                "docker",
-                "container",
-                "run",
-                "--name",
-                container_name,
-                "--rm",
-                "-d",
-                "-p",
-                f"{port}:2222",
-                "-e",
-                f"USER_NAME={username}",
-                "-e",
-                f"USER_PASSWORD={password}",
-                "-e",
-                f"PASSWORD_ACCESS=true",
-                "linuxserver/openssh-server",
-            ],
-            check=True,
-            capture_output=True,
+        self.assertEqual(
+            [stdout_tail, stderr_tail],
+            [destination.getvalue() for destination in destinations],
         )
-
-        # Poll until the port is open.
-        wait_for_ssh_server(host="localhost", port=port, timeout=10)
-
-        yield
-
-    finally:
-        stop_and_remove_container(name=container_name)
-
-
-def wait_for_ssh_server(*, host: str, port: int, timeout: float) -> None:
-    deadline = monotonic() + timeout
-    while True:
-        try:
-            with socket.create_connection((host, port), timeout=1) as sock:
-                # Read the SSH banner to verify the server is ready
-                sock.settimeout(1)
-                banner = sock.recv(1024).decode("utf-8", errors="ignore").strip()
-                if banner.startswith("SSH-"):
-                    # Valid SSH banner received
-                    break
-                else:
-                    raise ValueError(f"Invalid SSH banner: {banner}")
-        except (OSError, ValueError):
-            if monotonic() >= deadline:
-                raise RuntimeError(f"Timed out waiting for SSH server on {host}:{port}")
-            sleep(0.1)
-
-
-def stop_and_remove_container(*, name: str) -> None:
-    logger = getLogger(__name__)
-
-    completed = run(
-        args=[
-            "docker",
-            "container",
-            "stop",
-            name,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode:
-        if "No such container" in completed.stderr:
-            return
-
-        if "is already in progress" in completed.stderr:
-            return
-
-        logger.error(f"Failed to stop container `{name}`:\n{completed.stderr}")
-
-    completed = run(
-        args=[
-            "docker",
-            "container",
-            "rm",
-            name,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode:
-        if "No such container" in completed.stderr:
-            return
-
-        if "is already in progress" in completed.stderr:
-            return
-
-        logger.error(f"Failed to remove container `{name}`:\n{completed.stderr}")
-
-
-class FakeTransport:
-    def is_active(self) -> bool:
-        return True
-
-
-class FakeChannel:
-    def __init__(self, *, exit_status: int):
-        self.exit_status = exit_status
-
-    def recv_exit_status(self) -> int:
-        return self.exit_status
-
-
-class FakeChannelBytesIO(BytesIO):
-    def __init__(self, initial_bytes: bytes, *, channel: FakeChannel):
-        super().__init__(initial_bytes)
-        self.channel = channel
+        self.assertEqual(stdout_tail, cm.exception.output)
+        self.assertEqual(stderr_tail, cm.exception.stderr)

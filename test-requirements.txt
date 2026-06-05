@@ -1,2 +1,3 @@
+comparable_pattern
 fabric
 paramiko

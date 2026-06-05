@@ -10,6 +10,7 @@ independently while the process is running.
 - For each output stream (`stdout` and `stderr`), choose independently whether to log, capture, or discard it.
 - Pipe bytes or files to `stdin`.
 - Pass environment variables to the subprocess (even via SSH if the server's `AcceptEnv` setting allows it).
+- Enforce configurable timeouts for local subprocesses, remote SSH commands, and SSH network operations.
 - Support many of the same arguments as `subprocess.run`.
 - Provide access to the running process and incrementally captured output via a context manager.
 
@@ -261,22 +262,23 @@ python -m pip install "run_with_logger[ssh]"
 Then pass either a connected `paramiko.SSHClient` or a `fabric.Connection`.
 
 ```python
+from contextlib import closing
 from logging import getLogger
 from paramiko import SSHClient
 from run_with_logger import run_with_logger__ssh
 
 logger = getLogger(__name__)
-client = SSHClient()
-
-# Configure and connect the client as appropriate for your environment.
-
-completed = run_with_logger__ssh(
-    client=client,
-    command="whoami",
-    logger=logger,
-    stdout_action="capture",
-    stderr_action="capture",
-)
+with closing(SSHClient()) as client:
+    
+    # Configure and connect the client as appropriate for your environment.
+    
+    completed = run_with_logger__ssh(
+        client=client,
+        command="whoami",
+        logger=logger,
+        stdout_action="capture",
+        stderr_action="capture",
+    )
 
 print(completed.stdout.decode().strip())
 ```
