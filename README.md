@@ -262,22 +262,23 @@ python -m pip install "run_with_logger[ssh]"
 Then pass either a connected `paramiko.SSHClient` or a `fabric.Connection`.
 
 ```python
+from contextlib import closing
 from logging import getLogger
 from paramiko import SSHClient
 from run_with_logger import run_with_logger__ssh
 
 logger = getLogger(__name__)
-client = SSHClient()
-
-# Configure and connect the client as appropriate for your environment.
-
-completed = run_with_logger__ssh(
-    client=client,
-    command="whoami",
-    logger=logger,
-    stdout_action="capture",
-    stderr_action="capture",
-)
+with closing(SSHClient()) as client:
+    
+    # Configure and connect the client as appropriate for your environment.
+    
+    completed = run_with_logger__ssh(
+        client=client,
+        command="whoami",
+        logger=logger,
+        stdout_action="capture",
+        stderr_action="capture",
+    )
 
 print(completed.stdout.decode().strip())
 ```

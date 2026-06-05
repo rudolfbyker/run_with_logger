@@ -1,13 +1,11 @@
 import socket
 import sys
 import unittest
-from contextlib import contextmanager
-from io import BytesIO
+from contextlib import contextmanager, closing
 from logging import getLogger, INFO
 from subprocess import CalledProcessError, run
 from time import sleep, monotonic
 from typing import Generator
-from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from paramiko import SSHClient, AutoAddPolicy
@@ -53,37 +51,35 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         Pass bytes to `stdin` while capturing `stdout` and `stderr`.
         """
         logger = getLogger(__name__)
-        ssh_client = SSHClient()
-        channel = FakeChannel(exit_status=0)
-        stdin_stream = Mock()
-        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
-        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
 
-        with (
-            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
-            patch.object(
-                ssh_client,
-                "exec_command",
-                return_value=(stdin_stream, stdout_stream, stderr_stream),
-            ) as exec_command,
-        ):
+        port = 54321
+        username = "user"
+        password = "password"
+
+        with ssh_server(
+            port=port,
+            username=username,
+            password=password,
+        ), closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname="localhost",
+                port=port,
+                username=username,
+                password=password,
+            )
             completed = run_with_logger__ssh(
                 logger=logger,
                 client=ssh_client,
-                command="cat",
+                command='cat; echo "ERR" >&2',
                 stdin_data=b"IN\n",
                 stdout_action="capture",
                 stderr_action="capture",
             )
 
-        exec_command.assert_called_once_with(
-            command="cat", environment=None, timeout=None
-        )
-        stdin_stream.write.assert_called_once_with(b"IN\n")
-        stdin_stream.close.assert_called_once_with()
-        self.assertEqual(0, completed.returncode)
-        self.assertEqual(b"OUT\n", completed.stdout)
-        self.assertEqual(b"ERR\n", completed.stderr)
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual(["IN"], completed.stdout.decode().splitlines())
+            self.assertEqual(["ERR"], completed.stderr.decode().splitlines())
 
     def test_paramiko__nonzero_exit_raises_called_process_error_with_captured_streams(
         self,
@@ -92,31 +88,36 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         Using `check=True` while capturing streams should still raise `CalledProcessError` for non-zero exit codes.
         """
         logger = getLogger(__name__)
-        ssh_client = SSHClient()
-        channel = FakeChannel(exit_status=5)
-        stdout_stream = FakeChannelBytesIO(b"OUT\n", channel=channel)
-        stderr_stream = FakeChannelBytesIO(b"ERR\n", channel=channel)
 
-        with (
-            patch.object(ssh_client, "get_transport", return_value=FakeTransport()),
-            patch.object(
-                ssh_client,
-                "exec_command",
-                return_value=(Mock(), stdout_stream, stderr_stream),
-            ),
-        ):
+        port = 54321
+        username = "user"
+        password = "password"
+
+        with ssh_server(
+            port=port,
+            username=username,
+            password=password,
+        ), closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname="localhost",
+                port=port,
+                username=username,
+                password=password,
+            )
+            command = '/bin/sh -c \'echo "OUT"; echo "ERR" >&2; exit 5\''
             with self.assertRaises(CalledProcessError) as cm:
                 run_with_logger__ssh(
                     logger=logger,
                     client=ssh_client,
-                    command="exit 5",
+                    command=command,
                     stdout_action="capture",
                     stderr_action="capture",
                 )
 
         e = cm.exception
         self.assertEqual(5, e.returncode)
-        self.assertEqual("exit 5", e.cmd)
+        self.assertEqual(command, e.cmd)
         self.assertEqual(b"OUT\n", e.output)
         self.assertEqual(b"ERR\n", e.stderr)
 
@@ -134,29 +135,25 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             port=port,
             username=username,
             password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                completed = run_with_logger__ssh(
-                    logger=logger,
-                    client=ssh_client,
-                    command="whoami",
-                    stdout_action="capture",
-                    stderr_action="capture",
-                )
+        ), closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname="localhost",
+                port=port,
+                username=username,
+                password=password,
+            )
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="whoami",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
 
-                self.assertEqual(0, completed.returncode)
-                self.assertEqual(username, completed.stdout.decode().strip())
-                self.assertEqual("", completed.stderr.decode().strip())
-            finally:
-                ssh_client.close()
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual(username, completed.stdout.decode().strip())
+            self.assertEqual("", completed.stderr.decode().strip())
 
     def test_paramiko__capture_stderr(self) -> None:
         """
@@ -172,29 +169,25 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             port=port,
             username=username,
             password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                completed = run_with_logger__ssh(
-                    logger=logger,
-                    client=ssh_client,
-                    command="whoami >&2",
-                    stdout_action="capture",
-                    stderr_action="capture",
-                )
+        ), closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname="localhost",
+                port=port,
+                username=username,
+                password=password,
+            )
+            completed = run_with_logger__ssh(
+                logger=logger,
+                client=ssh_client,
+                command="whoami >&2",
+                stdout_action="capture",
+                stderr_action="capture",
+            )
 
-                self.assertEqual(0, completed.returncode)
-                self.assertEqual("", completed.stdout.decode().strip())
-                self.assertEqual(username, completed.stderr.decode().strip())
-            finally:
-                ssh_client.close()
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual("", completed.stdout.decode().strip())
+            self.assertEqual(username, completed.stderr.decode().strip())
 
     def test_fabric__capture_stdout(self) -> None:
         """
@@ -284,41 +277,37 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             port=port,
             username=username,
             password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                with self.assertLogs(level=INFO) as logs:
-                    completed = run_with_logger__ssh(
-                        logger=logger,
-                        level=INFO,
-                        client=ssh_client,
-                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
-                        stdout_action="log",
-                        stderr_action="discard",
-                        check=False,
-                    )
-
-                self.assertEqual(
-                    [
-                        (INFO, "One\n"),
-                        (INFO, "Two\n"),
-                        (INFO, "Three\n"),
-                    ],
-                    [(r.levelno, r.message) for r in logs.records],
+        ), closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname="localhost",
+                port=port,
+                username=username,
+                password=password,
+            )
+            with self.assertLogs(level=INFO) as logs:
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    level=INFO,
+                    client=ssh_client,
+                    command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\'',
+                    stdout_action="log",
+                    stderr_action="discard",
+                    check=False,
                 )
 
-                self.assertEqual(0, completed.returncode)
-                self.assertIsNone(completed.stdout)
-                self.assertIsNone(completed.stderr)
-            finally:
-                ssh_client.close()
+            self.assertEqual(
+                [
+                    (INFO, "One\n"),
+                    (INFO, "Two\n"),
+                    (INFO, "Three\n"),
+                ],
+                [(r.levelno, r.message) for r in logs.records],
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertIsNone(completed.stdout)
+            self.assertIsNone(completed.stderr)
 
     def test_paramiko__log_stderr(self) -> None:
         """
@@ -334,41 +323,37 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             port=port,
             username=username,
             password=password,
-        ):
-            ssh_client = SSHClient()
-            try:
-                ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy)
-                ssh_client.connect(
-                    hostname="localhost",
-                    port=port,
-                    username=username,
-                    password=password,
-                )
-                with self.assertLogs(level=INFO) as logs:
-                    completed = run_with_logger__ssh(
-                        logger=logger,
-                        level=INFO,
-                        client=ssh_client,
-                        command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
-                        stdout_action="discard",
-                        stderr_action="log",
-                        check=False,
-                    )
-
-                self.assertEqual(
-                    [
-                        (INFO, "One\n"),
-                        (INFO, "Two\n"),
-                        (INFO, "Three\n"),
-                    ],
-                    [(r.levelno, r.message) for r in logs.records],
+        ), closing(SSHClient()) as ssh_client:
+            ssh_client.set_missing_host_key_policy(policy=AutoAddPolicy())
+            ssh_client.connect(
+                hostname="localhost",
+                port=port,
+                username=username,
+                password=password,
+            )
+            with self.assertLogs(level=INFO) as logs:
+                completed = run_with_logger__ssh(
+                    logger=logger,
+                    level=INFO,
+                    client=ssh_client,
+                    command='/bin/sh -c \'echo "One"; echo "Two"; sleep 0.1; echo "Three";\' >&2',
+                    stdout_action="discard",
+                    stderr_action="log",
+                    check=False,
                 )
 
-                self.assertEqual(0, completed.returncode)
-                self.assertIsNone(completed.stdout)
-                self.assertIsNone(completed.stderr)
-            finally:
-                ssh_client.close()
+            self.assertEqual(
+                [
+                    (INFO, "One\n"),
+                    (INFO, "Two\n"),
+                    (INFO, "Three\n"),
+                ],
+                [(r.levelno, r.message) for r in logs.records],
+            )
+
+            self.assertEqual(0, completed.returncode)
+            self.assertIsNone(completed.stdout)
+            self.assertIsNone(completed.stderr)
 
     def test_fabric__log_stdout(self) -> None:
         """
@@ -577,22 +562,3 @@ def stop_and_remove_container(*, name: str) -> None:
             return
 
         logger.error(f"Failed to remove container `{name}`:\n{completed.stderr}")
-
-
-class FakeTransport:
-    def is_active(self) -> bool:
-        return True
-
-
-class FakeChannel:
-    def __init__(self, *, exit_status: int):
-        self.exit_status = exit_status
-
-    def recv_exit_status(self) -> int:
-        return self.exit_status
-
-
-class FakeChannelBytesIO(BytesIO):
-    def __init__(self, initial_bytes: bytes, *, channel: FakeChannel):
-        super().__init__(initial_bytes)
-        self.channel = channel
