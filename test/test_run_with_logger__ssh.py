@@ -2,7 +2,7 @@ import unittest
 from contextlib import contextmanager, closing
 from datetime import timedelta
 from logging import getLogger, INFO
-from subprocess import CalledProcessError, CompletedProcess
+from subprocess import CalledProcessError, CompletedProcess, TimeoutExpired
 from typing import ClassVar, ContextManager, Generator, Tuple
 
 from fabric import Connection
@@ -388,3 +388,39 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                     self.assertEqual(
                         ["user"], [r.message.strip() for r in logs.records]
                     )
+
+    def test_command_timeout(self) -> None:
+        """
+        Test what happens if the remote command runs for too long.
+        """
+        logger = getLogger(__name__)
+
+        _, ssh_server_control = self.ensure_ssh_server()
+
+        for client_cm in [self.paramiko_client, self.fabric_connection]:
+            with self.subTest():
+                with client_cm() as ssh_client:
+                    # Command shorter than timeout:
+                    run_with_logger__ssh(
+                        logger=logger,
+                        level=INFO,
+                        client=ssh_client,
+                        command="sleep 0.1",
+                        stdout_action="log",
+                        stderr_action="log",
+                        check=False,
+                        command_timeout=timedelta(seconds=1),
+                    )
+
+                    # Command longer than timeout:
+                    with self.assertRaises(TimeoutExpired):
+                        run_with_logger__ssh(
+                            logger=logger,
+                            level=INFO,
+                            client=ssh_client,
+                            command="sleep 1",
+                            stdout_action="log",
+                            stderr_action="log",
+                            check=False,
+                            command_timeout=timedelta(seconds=0.1),
+                        )
