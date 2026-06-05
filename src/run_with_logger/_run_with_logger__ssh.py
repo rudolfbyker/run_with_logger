@@ -219,7 +219,10 @@ def run_with_logger__ssh(
     Like `run_with_logger`, but via SSH.
 
     Args:
-        client: The `paramiko` SSH client to use for running the command.
+        client:
+            The `paramiko.SSHClient` or `fabric.Connection` to use for running the command.
+            For `paramiko.SSHClient`, the connection must already be open.
+            For `fabric.Connection`, the connection will be opened automatically.
         command: The command line program and arguments.
         logger: The logger to which to pipe stdout and/or stderr.
         level: The logging level to use.
