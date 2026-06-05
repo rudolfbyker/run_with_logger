@@ -1,7 +1,10 @@
 from datetime import timedelta
+from logging import getLogger
 from subprocess import Popen, TimeoutExpired
 from time import monotonic, sleep
 from typing import Callable, TypedDict, Iterable, Tuple
+
+logger = getLogger(__name__)
 
 
 class DeadlineSpec(TypedDict):
@@ -113,12 +116,22 @@ def monitor_process(
     terminated = False
 
     def terminate() -> None:
+        logger.warning(
+            "Terminating process %d because it took longer than %s",
+            process.pid,
+            terminate_after,
+        )
         process.terminate()
 
         nonlocal terminated
         terminated = True
 
     def kill() -> None:
+        logger.warning(
+            "Killing process %d because it took longer than %s",
+            process.pid,
+            kill_after,
+        )
         process.kill()
         raise TimeoutExpired(
             cmd=process.args,
