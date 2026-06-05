@@ -400,6 +400,11 @@ print("ERR", file=sys.stderr)
         """
         Test timeout. Command does not respond to being terminated, so it has to be killed.
         """
+        if sys.platform == "win32":
+            raise unittest.SkipTest(
+                "On Windows, `Popen.terminate()` and `Popen.kill()` are the same thing."
+            )
+
         script = """\
 import signal
 import time
