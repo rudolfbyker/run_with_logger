@@ -362,7 +362,7 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 # That happens before our function is called!
                 with client_cm() as ssh_client:
 
-                    def run() -> CompletedProcess:
+                    def run() -> CompletedProcess[bytes]:
                         return run_with_logger__ssh(
                             logger=logger,
                             level=INFO,
