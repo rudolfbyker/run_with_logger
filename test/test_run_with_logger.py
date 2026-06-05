@@ -396,9 +396,9 @@ print("ERR", file=sys.stderr)
             [r.message for r in logs.records],
         )
 
-    def test_timeout__command_terminated_killed(self) -> None:
+    def test_timeout__command_terminated_killed__log_streams(self) -> None:
         """
-        Test timeout. Command does not respond to being terminated, so it has to be killed.
+        Test timeout. Command does not respond to being terminated, so it has to be killed. Streams are logged.
         """
         if sys.platform == "win32":
             raise unittest.SkipTest(
@@ -448,3 +448,62 @@ while True:
             ],
             [r.message for r in logs.records],
         )
+
+    def test_timeout__command_terminated_killed__capture_streams(self) -> None:
+        """
+        Test timeout. Command does not respond to being terminated, so it has to be killed. Streams are captured.
+        """
+        if sys.platform == "win32":
+            raise unittest.SkipTest(
+                "On Windows, `Popen.terminate()` and `Popen.kill()` are the same thing."
+            )
+
+        script = """\
+import signal
+import time
+
+def print_signal(signum, frame):
+    sig = signal.Signals(signum)
+    print(f"Received {sig.name}")
+
+for sig in signal.Signals:
+    try:
+        signal.signal(sig, print_signal)
+    except (OSError, RuntimeError, ValueError):
+        pass
+
+while True:
+    print("Sleeping")
+    time.sleep(1)
+"""
+
+        with self.assertLogs(level=INFO) as logs:
+            with self.assertRaises(TimeoutExpired) as e:
+                run_with_logger(
+                    logger=getLogger(__name__),
+                    level=INFO,
+                    args=[sys.executable, "-u", "-c", script],
+                    stdout_action="capture",
+                    stderr_action="capture",
+                    check=False,
+                    timeouts=(timedelta(seconds=0.1), timedelta(seconds=0.2)),
+                )
+
+        self.assertEqual(
+            [
+                "Terminating process "
+                + ComparablePattern(re.compile(r"\d+"))
+                + " because it took longer than 0:00:00.100000",
+                "Killing process "
+                + ComparablePattern(re.compile(r"\d+"))
+                + " because it took longer than 0:00:00.200000",
+            ],
+            [r.message for r in logs.records],
+        )
+
+        assert e.exception.stdout is not None
+        self.assertEqual(
+            ["Sleeping", "Received SIGTERM"], e.exception.stdout.decode().splitlines()
+        )
+        assert e.exception.stderr is not None
+        self.assertEqual([], e.exception.stderr.decode().splitlines())
