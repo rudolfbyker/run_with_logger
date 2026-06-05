@@ -10,6 +10,7 @@ independently while the process is running.
 - For each output stream (`stdout` and `stderr`), choose independently whether to log, capture, or discard it.
 - Pipe bytes or files to `stdin`.
 - Pass environment variables to the subprocess (even via SSH if the server's `AcceptEnv` setting allows it).
+- Enforce configurable timeouts for local subprocesses, remote SSH commands, and SSH network operations.
 - Support many of the same arguments as `subprocess.run`.
 - Provide access to the running process and incrementally captured output via a context manager.
 

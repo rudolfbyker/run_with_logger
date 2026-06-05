@@ -67,7 +67,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 stderr_action="capture",
             )
 
-        exec_command.assert_called_once_with(command="cat", environment=None)
+        exec_command.assert_called_once_with(
+            command="cat", environment=None, timeout=None
+        )
         stdin_stream.write.assert_called_once_with(b"IN\n")
         stdin_stream.close.assert_called_once_with()
         self.assertEqual(0, completed.returncode)
