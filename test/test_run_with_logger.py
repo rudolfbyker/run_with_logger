@@ -1,13 +1,17 @@
 import json
+import re
 import sys
 import unittest
+from datetime import timedelta
 from io import BytesIO
-from logging import getLogger, DEBUG, INFO
+from logging import getLogger, DEBUG, INFO, WARNING
 from os import environ
 from pathlib import Path
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, TimeoutExpired
 from tempfile import TemporaryDirectory
 from typing import List
+
+from comparable_pattern import ComparablePattern
 
 from run_with_logger import run_with_logger
 
@@ -331,3 +335,111 @@ print("ERR", file=sys.stderr)
         self.assertEqual(0, completed.returncode)
         self.assertIsNone(completed.stdout)
         self.assertIsNone(completed.stderr)
+
+    def test_timeout__command_completes_in_time(self) -> None:
+        """
+        Test timeout. Command completes in time.
+        """
+        completed = run_with_logger(
+            logger=getLogger(__name__),
+            args=[sys.executable, "-c", "from time import sleep; sleep(0.1)"],
+            stdout_action="discard",
+            stderr_action="discard",
+            check=False,
+            timeouts=(timedelta(seconds=1), timedelta(seconds=2)),
+        )
+        self.assertEqual(0, completed.returncode)
+
+    def test_timeout__command_terminated(self) -> None:
+        """
+        Test timeout. Command is terminated and stops before the kill timeout.
+        """
+        with self.assertLogs(level=WARNING) as logs:
+            with self.assertRaises(TimeoutExpired):
+                run_with_logger(
+                    logger=getLogger(__name__),
+                    args=[sys.executable, "-c", "from time import sleep; sleep(1)"],
+                    stdout_action="discard",
+                    stderr_action="discard",
+                    check=False,
+                    timeouts=(timedelta(seconds=0.1), timedelta(seconds=0.2)),
+                )
+        self.assertEqual(
+            [
+                "Terminating process "
+                + ComparablePattern(re.compile(r"\d+"))
+                + " because it took longer than 0:00:00.100000"
+            ],
+            [r.message for r in logs.records],
+        )
+
+    def test_timeout__command_killed(self) -> None:
+        """
+        Test timeout. Command is killed. The terminate timeout has no effect when it's longer than the kill timeout.
+        """
+        with self.assertLogs(level=WARNING) as logs:
+            with self.assertRaises(TimeoutExpired):
+                run_with_logger(
+                    logger=getLogger(__name__),
+                    args=[sys.executable, "-c", "from time import sleep; sleep(1)"],
+                    stdout_action="discard",
+                    stderr_action="discard",
+                    check=False,
+                    timeouts=(timedelta(seconds=0.2), timedelta(seconds=0.1)),
+                )
+        self.assertEqual(
+            [
+                "Killing process "
+                + ComparablePattern(re.compile(r"\d+"))
+                + " because it took longer than 0:00:00.100000"
+            ],
+            [r.message for r in logs.records],
+        )
+
+    def test_timeout__command_terminated_killed(self) -> None:
+        """
+        Test timeout. Command does not respond to being terminated, so it has to be killed.
+        """
+        script = """\
+import signal
+import time
+
+def print_signal(signum, frame):
+    sig = signal.Signals(signum)
+    print(f"Received {sig.name}")
+
+for sig in signal.Signals:
+    try:
+        signal.signal(sig, print_signal)
+    except (OSError, RuntimeError, ValueError):
+        pass
+
+while True:
+    print("Sleeping")
+    time.sleep(1)
+"""
+
+        with self.assertLogs(level=INFO) as logs:
+            with self.assertRaises(TimeoutExpired):
+                run_with_logger(
+                    logger=getLogger(__name__),
+                    level=INFO,
+                    args=[sys.executable, "-u", "-c", script],
+                    stdout_action="log",
+                    stderr_action="log",
+                    check=False,
+                    timeouts=(timedelta(seconds=0.1), timedelta(seconds=0.2)),
+                )
+        self.assertEqual(
+            [
+                "Sleeping",
+                "Terminating process "
+                + ComparablePattern(re.compile(r"\d+"))
+                + " because it took longer than 0:00:00.100000",
+                "Received SIGTERM",
+                "Killing process "
+                + ComparablePattern(re.compile(r"\d+"))
+                + " because it took longer than 0:00:00.200000",
+            ],
+            [r.message for r in logs.records],
+        )
