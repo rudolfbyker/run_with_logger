@@ -25,8 +25,7 @@ def monitor_deadlines(
     Call callbacks at the specified deadlines if something is running longer than it should.
 
     Args:
-        specs: Deadline definitions.
-        poll_interval: How often to call `is_done`, in seconds.
+        poll_interval: How often to check the stop condition, in seconds.
         stop: A callback that should return True when we should stop monitoring.
         t_start:
             The time at which monitoring started.
@@ -72,7 +71,8 @@ def monitor_deadlines(
                 state["hit"] = True
                 state["spec"]["callback"]()
 
-        sleep(min(t_before_next_deadline() or 0, poll_interval))
+        t_next = t_before_next_deadline()
+        sleep(poll_interval if t_next is None else min(t_next, poll_interval))
 
     return states
 

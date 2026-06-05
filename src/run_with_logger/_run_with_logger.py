@@ -168,9 +168,9 @@ def run_with_logger__cm(
 
             except TimeoutExpired as e:
                 # Fill in the streams that we have captured so far.
-                if not e.output:
+                if e.output is None:
                     e.output = get_stdout()
-                if not e.stderr:
+                if e.stderr is None:
                     e.stderr = get_stderr()
                 raise e
 
