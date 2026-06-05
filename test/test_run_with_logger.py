@@ -222,6 +222,9 @@ for i in range({n}):
         self.assertEqual({"BAZ", "FOO"}, with_extras.keys() - environ.keys())
 
     def test_stdin_data(self) -> None:
+        """
+        Test passing bytes to stdin.
+        """
         logger = getLogger(__name__)
         script = """\
 import sys
@@ -240,6 +243,9 @@ print(b, file=sys.stderr)
         self.assertEqual("World", completed.stderr.decode().strip())
 
     def test_stdin_io_file(self) -> None:
+        """
+        Test streaming a file to stdin.
+        """
         logger = getLogger(__name__)
         script = """\
 import sys
@@ -265,6 +271,9 @@ print(b, file=sys.stderr)
                 self.assertEqual("World", completed.stderr.decode().strip())
 
     def test_stdin_data_and_stdin_io_conflict(self) -> None:
+        """
+        Only one of `stdin_io` or `stdin_data` may be specified.
+        """
         logger = getLogger(__name__)
         with self.assertRaisesRegex(
             ValueError,
@@ -278,6 +287,9 @@ print(b, file=sys.stderr)
             )
 
     def test_check_true_raises_called_process_error_with_captured_streams(self) -> None:
+        """
+        Using `check=True` while capturing streams should still raise `CalledProcessError` for non-zero exit codes.
+        """
         logger = getLogger(__name__)
         script = """\
 import sys
@@ -300,6 +312,9 @@ sys.exit(7)
         self.assertEqual(["ERR"], e.stderr.decode().splitlines())
 
     def test_discard_both_streams_returns_none_streams(self) -> None:
+        """
+        We can discard both streams, even if they have data.
+        """
         logger = getLogger(__name__)
         script = """\
 import sys

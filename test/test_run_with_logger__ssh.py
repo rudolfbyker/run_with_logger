@@ -17,6 +17,9 @@ from run_with_logger import run_with_logger__ssh, run_with_logger__ssh__cm
 
 class TestRunWithLoggerSsh(unittest.TestCase):
     def test_invalid_client_type__raises_value_error(self) -> None:
+        """
+        The `client` argument must be `paramiko.SSHClient` or `fabric.Connection`.
+        """
         logger = getLogger(__name__)
 
         with self.assertRaisesRegex(
@@ -31,6 +34,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 pass
 
     def test_disconnected_paramiko_client__raises_value_error(self) -> None:
+        """
+        The `paramiko.SSHClient` must be connected.
+        """
         logger = getLogger(__name__)
         ssh_client = SSHClient()
 
@@ -43,6 +49,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 pass
 
     def test_paramiko__stdin_data(self) -> None:
+        """
+        Pass bytes to `stdin` while capturing `stdout` and `stderr`.
+        """
         logger = getLogger(__name__)
         ssh_client = SSHClient()
         channel = FakeChannel(exit_status=0)
@@ -79,6 +88,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
     def test_paramiko__nonzero_exit_raises_called_process_error_with_captured_streams(
         self,
     ) -> None:
+        """
+        Using `check=True` while capturing streams should still raise `CalledProcessError` for non-zero exit codes.
+        """
         logger = getLogger(__name__)
         ssh_client = SSHClient()
         channel = FakeChannel(exit_status=5)
@@ -109,6 +121,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
         self.assertEqual(b"ERR\n", e.stderr)
 
     def test_paramiko__capture_stdout(self) -> None:
+        """
+        Capture `stdout` from a successful command with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
         port = 54321
@@ -144,6 +159,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 ssh_client.close()
 
     def test_paramiko__capture_stderr(self) -> None:
+        """
+        Capture `stderr` from a successful command with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
         port = 54321
@@ -179,6 +197,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 ssh_client.close()
 
     def test_fabric__capture_stdout(self) -> None:
+        """
+        Capture `stdout` from a successful command with a `fabric.Connection`.
+        """
         from fabric import Connection
 
         logger = getLogger(__name__)
@@ -213,6 +234,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             self.assertEqual("", completed.stderr.decode().strip())
 
     def test_fabric__capture_stderr(self) -> None:
+        """
+        Capture `stderr` from a successful command with a `fabric.Connection`.
+        """
         from fabric import Connection
 
         logger = getLogger(__name__)
@@ -247,6 +271,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
             self.assertEqual(username, completed.stderr.decode().strip())
 
     def test_paramiko__log_stdout(self) -> None:
+        """
+        Test logging `stdout` while discarding `stderr` with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
         port = 54321
@@ -294,6 +321,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 ssh_client.close()
 
     def test_paramiko__log_stderr(self) -> None:
+        """
+        Test logging `stderr` while discarding `stdout` with a `paramiko.SSHClient`.
+        """
         logger = getLogger(__name__)
 
         port = 54321
@@ -341,6 +371,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 ssh_client.close()
 
     def test_fabric__log_stdout(self) -> None:
+        """
+        Test logging `stdout` while discarding `stderr` with a `fabric.Connection`.
+        """
         from fabric import Connection
 
         logger = getLogger(__name__)
@@ -387,6 +420,9 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                 self.assertIsNone(completed.stderr)
 
     def test_fabric__log_stderr(self) -> None:
+        """
+        Test logging `stderr` while discarding `stdout` with a `fabric.Connection`.
+        """
         from fabric import Connection
 
         logger = getLogger(__name__)
