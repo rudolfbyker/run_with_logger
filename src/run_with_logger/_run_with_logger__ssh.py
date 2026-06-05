@@ -151,8 +151,8 @@ def run_with_logger__ssh__cm(
         assert command_timeout is not None
         raise TimeoutExpired(cmd=command, timeout=command_timeout.total_seconds())
 
-    with stdout_cm, stderr_cm:
-        try:
+    try:
+        with stdout_cm, stderr_cm:
             _write_stdin_data(
                 stdin_stream=stdin_stream,
                 stdin_data=stdin_data,
@@ -176,13 +176,14 @@ def run_with_logger__ssh__cm(
                         t_start=t_start,
                     )
                 code = channel.recv_exit_status()
-        except TimeoutExpired as e:
-            # Fill in the streams that we have captured so far.
-            if e.output is None:
-                e.output = get_stdout()
-            if e.stderr is None:
-                e.stderr = get_stderr()
-            raise e
+
+    except TimeoutExpired as e:
+        # Fill in the streams that we have captured so far.
+        if e.output is None:
+            e.output = get_stdout()
+        if e.stderr is None:
+            e.stderr = get_stderr()
+        raise e
 
     if check and code:
         raise CalledProcessError(

@@ -1,9 +1,11 @@
 import unittest
 from contextlib import contextmanager, closing
 from datetime import timedelta
+from io import BytesIO
 from logging import getLogger, INFO
 from subprocess import CalledProcessError, CompletedProcess, TimeoutExpired
-from typing import ClassVar, ContextManager, Generator, Tuple
+from typing import ClassVar, ContextManager, Generator, IO, List, Tuple, cast
+from unittest.mock import patch
 
 from fabric import Connection
 from paramiko import SSHClient, AutoAddPolicy, SSHException
@@ -424,3 +426,99 @@ class TestRunWithLoggerSsh(unittest.TestCase):
                             check=False,
                             command_timeout=timedelta(seconds=0.1),
                         )
+
+    def test_command_timeout__exception_streams_include_reader_cleanup_capture(
+        self,
+    ) -> None:
+        """
+        Regression for timeout exceptions snapshotting streams too early.
+        `TimeoutExpired` should include bytes captured before the reader context has fully exited.
+
+        In real use, a process can write final stdout/stderr just before timeout termination,
+        leaving those bytes in the pipe until the capture thread drains them during context-manager cleanup.
+        This test fakes that late drain to make the expected behavior deterministic.
+        """
+        stdout_tail = b"stdout drained during reader cleanup\n"
+        stderr_tail = b"stderr drained during reader cleanup\n"
+        cleanup_chunks = [stdout_tail, stderr_tail]
+        destinations: List[BytesIO] = []
+
+        class FakeTransport:
+            def is_active(self) -> bool:
+                return True
+
+        class FakeChannel:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+            def exit_status_ready(self) -> bool:
+                return False
+
+            def recv_exit_status(self) -> int:
+                return 0
+
+        class FakeStream(BytesIO):
+            def __init__(self, channel: FakeChannel) -> None:
+                super().__init__()
+                self.channel = channel
+
+        class FakeSshClient:
+            def __init__(self) -> None:
+                self.channel = FakeChannel()
+
+            def get_transport(self) -> FakeTransport:
+                return FakeTransport()
+
+            def exec_command(
+                self,
+                *,
+                command: str,
+                environment: dict[str, str] | None,
+                timeout: float | None,
+            ) -> Tuple[BytesIO, FakeStream, FakeStream]:
+                del command, environment, timeout
+                return (
+                    BytesIO(),
+                    FakeStream(self.channel),
+                    FakeStream(self.channel),
+                )
+
+        @contextmanager
+        def delayed_capture_thread(
+            *,
+            pipe: IO[bytes] | IO[str],
+            destination: BytesIO,
+        ) -> Generator[None, None, None]:
+            del pipe
+            chunk_index = len(destinations)
+            destinations.append(destination)
+            try:
+                yield
+            finally:
+                destination.write(cleanup_chunks[chunk_index])
+
+        with patch("paramiko.SSHClient", FakeSshClient):
+            with patch(
+                "run_with_logger._run_with_logger__ssh.pipe_capture__thread",
+                delayed_capture_thread,
+            ):
+                with self.assertRaises(TimeoutExpired) as cm:
+                    run_with_logger__ssh(
+                        logger=getLogger(__name__),
+                        client=cast(SSHClient, FakeSshClient()),
+                        command="sleep 10",
+                        stdout_action="capture",
+                        stderr_action="capture",
+                        check=False,
+                        command_timeout=timedelta(seconds=0.01),
+                    )
+
+        self.assertEqual(
+            [stdout_tail, stderr_tail],
+            [destination.getvalue() for destination in destinations],
+        )
+        self.assertEqual(stdout_tail, cm.exception.output)
+        self.assertEqual(stderr_tail, cm.exception.stderr)

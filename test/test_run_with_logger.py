@@ -2,6 +2,7 @@ import json
 import re
 import sys
 import unittest
+from contextlib import contextmanager
 from datetime import timedelta
 from io import BytesIO
 from logging import getLogger, DEBUG, INFO, WARNING
@@ -9,7 +10,8 @@ from os import environ
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from tempfile import TemporaryDirectory
-from typing import List
+from typing import List, Generator, IO
+from unittest.mock import patch
 
 from comparable_pattern import ComparablePattern
 
@@ -507,3 +509,60 @@ while True:
         )
         assert e.exception.stderr is not None
         self.assertEqual([], e.exception.stderr.decode().splitlines())
+
+    def test_timeout__exception_streams_include_reader_cleanup_capture(self) -> None:
+        """
+        Regression for timeout exceptions snapshotting streams too early.
+        `TimeoutExpired` should include bytes captured before the reader context has fully exited.
+
+        In real use, a process can write final stdout/stderr just before timeout termination,
+        leaving those bytes in the pipe until the capture thread drains them during context-manager cleanup.
+        This test fakes that late drain to make the expected behavior deterministic.
+        """
+        stdout_tail = b"stdout drained during reader cleanup\n"
+        stderr_tail = b"stderr drained during reader cleanup\n"
+        cleanup_chunks = [stdout_tail, stderr_tail]
+        destinations: List[BytesIO] = []
+
+        @contextmanager
+        def delayed_capture_thread(
+            *,
+            pipe: IO[bytes] | IO[str],
+            destination: BytesIO,
+        ) -> Generator[None, None, None]:
+            del pipe
+            chunk_index = len(destinations)
+            destinations.append(destination)
+            try:
+                yield
+            finally:
+                destination.write(cleanup_chunks[chunk_index])
+
+        with patch(
+            "run_with_logger._run_with_logger.pipe_capture__thread",
+            delayed_capture_thread,
+        ):
+            with self.assertLogs(level=WARNING):
+                with self.assertRaises(TimeoutExpired) as cm:
+                    run_with_logger(
+                        logger=getLogger(__name__),
+                        args=[
+                            sys.executable,
+                            "-c",
+                            "from time import sleep; sleep(10)",
+                        ],
+                        stdout_action="capture",
+                        stderr_action="capture",
+                        check=False,
+                        timeouts=(
+                            timedelta(seconds=0.01),
+                            timedelta(seconds=0.01),
+                        ),
+                    )
+
+        self.assertEqual(
+            [stdout_tail, stderr_tail],
+            [destination.getvalue() for destination in destinations],
+        )
+        self.assertEqual(stdout_tail, cm.exception.output)
+        self.assertEqual(stderr_tail, cm.exception.stderr)

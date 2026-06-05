@@ -140,8 +140,8 @@ def run_with_logger__cm(
         def get_stderr() -> Optional[bytes]:
             return stderr_buffer.getvalue() if stderr_buffer else None
 
-        with stdout_cm, stderr_cm:
-            try:
+        try:
+            with stdout_cm, stderr_cm:
                 _write_stdin_data(
                     process=process,
                     stdin_data=stdin_data,
@@ -166,13 +166,13 @@ def run_with_logger__cm(
                         while process.poll() is None:
                             sleep(0.1)
 
-            except TimeoutExpired as e:
-                # Fill in the streams that we have captured so far.
-                if e.output is None:
-                    e.output = get_stdout()
-                if e.stderr is None:
-                    e.stderr = get_stderr()
-                raise e
+        except TimeoutExpired as e:
+            # Fill in the streams that we have captured so far.
+            if e.output is None:
+                e.output = get_stdout()
+            if e.stderr is None:
+                e.stderr = get_stderr()
+            raise e
 
     if check and process.returncode:
         raise CalledProcessError(
